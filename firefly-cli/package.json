@@ -1,0 +1,48 @@
+{
+  "name": "firefly-cli",
+  "version": "1.0.0",
+  "description": "Command-line client for Firefly III.",
+  "type": "module",
+  "bin": {
+    "ffc": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint .",
+    "format:check": "prettier --check ."
+  },
+  "keywords": [
+    "firefly-iii",
+    "cli",
+    "personal-finance"
+  ],
+  "author": "",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "cli-table3": "^0.6.5",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.9.1",
+    "eslint": "^10.4.1",
+    "prettier": "^3.8.3",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.1",
+    "vitest": "^4.1.8"
+  }
+}

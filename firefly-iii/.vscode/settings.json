@@ -1,0 +1,8 @@
+{
+    "i18n-ally.localesPaths": [
+        "resources/lang",
+        "resources/locales",
+        "public/v2/i18n",
+        "resources/assets/v1/src/locales"
+    ]
+}

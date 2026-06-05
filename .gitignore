@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+firefly-iii/vendor/
+firefly-cli/node_modules/
+storage/oauth-private.key
+storage/oauth-public.key
+firefly-iii/storage/oauth-private.key
+firefly-iii/storage/oauth-public.key
+firefly-iii/storage/database/*.sqlite
+firefly-iii/storage/database/*.sqlite-*
+firefly-iii/storage/logs/*.log
+firefly-cli/dist/
+firefly-cli/coverage/
