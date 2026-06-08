@@ -6,6 +6,7 @@ import { collectOption, parseKeyValueOptions } from '../core/key-value.js';
 import { renderOutput } from '../core/output.js';
 import { parseBodyOptions } from '../core/request-body.js';
 import { ResourceService } from '../services/resource-service.js';
+import { importTransactions } from '../services/transaction-import.js';
 
 interface ListCommandOptions {
   page?: string;
@@ -42,6 +43,12 @@ interface TransactionCreateOptions extends BodyCommandOptions {
   destination?: string;
   amount?: string;
   description?: string;
+}
+
+interface TransactionImportOptions {
+  input?: string;
+  dryRun?: boolean;
+  confirm?: boolean;
 }
 
 interface ResourceDefinition {
@@ -202,6 +209,24 @@ function registerTransactions(program: Command): void {
       const context = await createCommandContext(this);
       const service = new ResourceService(context.client, { endpoint: definition.endpoint });
       const result = await service.create(await buildTransactionBody(options));
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  resource
+    .command('import')
+    .description('Preview or import transaction groups from a JSON file.')
+    .requiredOption('--input <file>', 'Read transactions from a JSON file.')
+    .option('--dry-run', 'Preview rows without creating transactions.')
+    .option('--confirm', 'Create rows that are not duplicates or ambiguous.')
+    .action(async function (options: TransactionImportOptions) {
+      if (options.dryRun && options.confirm) {
+        throw new FireflyInputError('Use either --dry-run or --confirm, not both.');
+      }
+      const context = await createCommandContext(this);
+      const result = await importTransactions(context.client, {
+        input: options.input!,
+        mode: options.confirm ? 'confirm' : 'dry-run',
+      });
       console.log(renderOutput(result, { format: context.format }));
     });
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -91,6 +91,87 @@ describe('base commands', () => {
           'Content-Type': 'application/json',
         }),
       }),
+    );
+  });
+
+  test('doctor local reports missing assets and APP_URL port mismatch', async () => {
+    const rootPath = join(tempDir, 'firefly-iii');
+    await mkdir(join(rootPath, 'public', 'v1', 'js'), { recursive: true });
+    await mkdir(join(rootPath, 'storage', 'database'), { recursive: true });
+    await writeFile(join(rootPath, 'artisan'), '');
+    await writeFile(
+      join(rootPath, '.env'),
+      [
+        'APP_URL=http://127.0.0.1:8000',
+        `DB_DATABASE=${join(rootPath, 'storage', 'database', 'database.sqlite')}`,
+      ].join('\n'),
+    );
+    await writeFile(join(rootPath, 'storage', 'database', 'database.sqlite'), '');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('', {
+        status: 302,
+        headers: { location: 'http://127.0.0.1:8001/login' },
+      }),
+    );
+
+    const result = await runCli([
+      'doctor',
+      'local',
+      '--root',
+      rootPath,
+      '--url',
+      'http://127.0.0.1:8001',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8001/',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    const report = JSON.parse(result.logs.join('\n'));
+    expect(report.ok).toBe(false);
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        {
+          name: 'root',
+          status: 'ok',
+          message: `Firefly III root found at ${rootPath}.`,
+        },
+        {
+          name: 'database',
+          status: 'ok',
+          message: 'SQLite database exists.',
+          path: join(rootPath, 'storage', 'database', 'database.sqlite'),
+        },
+        {
+          name: 'app-url',
+          status: 'warn',
+          message:
+            'APP_URL points to http://127.0.0.1:8000 but checked URL is http://127.0.0.1:8001.',
+          expected: 'http://127.0.0.1:8001',
+          actual: 'http://127.0.0.1:8000',
+        },
+        {
+          name: 'v2-assets',
+          status: 'fail',
+          message:
+            'Missing public/build/manifest.json. Run npm install and npm run build --workspace resources/assets/v2 from firefly-iii.',
+          path: join(rootPath, 'public', 'build', 'manifest.json'),
+        },
+        {
+          name: 'v1-assets',
+          status: 'fail',
+          message:
+            'Missing public/v1/js/app.js. Run npm run production --workspace resources/assets/v1 from firefly-iii and hard refresh the browser.',
+          path: join(rootPath, 'public', 'v1', 'js', 'app.js'),
+        },
+        {
+          name: 'http',
+          status: 'ok',
+          message: 'http://127.0.0.1:8001/ responded with HTTP 302.',
+        },
+      ]),
     );
   });
 });

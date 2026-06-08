@@ -69,6 +69,14 @@ ffc about --format json
 ffc me --format json
 ```
 
+Local Firefly III diagnostics:
+
+```bash
+ffc doctor local --root ../firefly-iii --url http://127.0.0.1:8000 --format json
+```
+
+The local doctor checks the Firefly root, SQLite database path, `APP_URL`, v2 Vite assets, v1 transaction UI assets, frontpage account preferences, and HTTP reachability. If the v1 or v2 assets are missing, run the suggested asset build command from `firefly-iii/` and hard refresh the browser.
+
 ## Resources
 
 Supported resource commands:
@@ -126,6 +134,15 @@ ffc transactions create \
   --amount 12.34 \
   --description "Coffee"
 ```
+
+Batch transaction import supports a JSON preview before writing:
+
+```bash
+ffc transactions import --input transactions.json --dry-run --format json
+ffc transactions import --input transactions.json --confirm --format json
+```
+
+The input may be a JSON array or an object with a `transactions` array. Rows can include `type`, `date`, `source_id` or `source_name`, `destination_id` or `destination_name`, `amount`, `description`, `category_name`, `notes`, and `tags`. The dry run reports rows as `create`, `duplicate`, or `ambiguous`; confirmation submits only create-ready rows.
 
 Webhook manual submission:
 

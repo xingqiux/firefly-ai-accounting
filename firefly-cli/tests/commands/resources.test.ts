@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -162,6 +162,176 @@ describe('resource commands', () => {
           description: 'Coffee',
         },
       ],
+    });
+  });
+
+  test('transactions import dry-run previews creates duplicates and ambiguous rows', async () => {
+    const inputPath = join(tempDir, 'transactions.json');
+    await writeFile(
+      inputPath,
+      JSON.stringify([
+        {
+          type: 'withdrawal',
+          date: '2026-06-07',
+          source_id: '8',
+          destination_name: 'Coffee Shop',
+          amount: '18.00',
+          description: 'Coffee',
+          category_name: 'Food',
+          notes: 'receipt',
+          tags: ['wechat'],
+        },
+        {
+          type: 'withdrawal',
+          date: '2026-06-07',
+          source_id: '8',
+          destination_name: 'Bookstore',
+          amount: '45.50',
+          description: 'Book',
+        },
+        {
+          type: 'withdrawal',
+          date: '2026-06-07',
+          source_id: '8',
+          amount: '9.90',
+        },
+      ]),
+    );
+    const fetchMock = mockJsonFetch({
+      data: [
+        {
+          id: '99',
+          attributes: {
+            transactions: [
+              {
+                date: '2026-06-07T00:00:00+08:00',
+                source_id: '8',
+                destination_name: 'Coffee Shop',
+                amount: '18.00',
+                description: 'Coffee',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const result = await runCli([
+      'transactions',
+      'import',
+      '--input',
+      inputPath,
+      '--dry-run',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/transactions?start=2026-06-07&end=2026-06-07&limit=500',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(JSON.parse(result.logs.join('\n'))).toEqual({
+      mode: 'dry-run',
+      summary: {
+        total: 3,
+        create: 1,
+        duplicate: 1,
+        ambiguous: 1,
+      },
+      rows: [
+        expect.objectContaining({
+          row: 1,
+          status: 'duplicate',
+          duplicateIds: ['99'],
+        }),
+        expect.objectContaining({
+          row: 2,
+          status: 'create',
+        }),
+        expect.objectContaining({
+          row: 3,
+          status: 'ambiguous',
+          reasons: ['description is required', 'destination_id or destination_name is required'],
+        }),
+      ],
+    });
+  });
+
+  test('transactions import confirm posts only create-ready rows', async () => {
+    const inputPath = join(tempDir, 'transactions.json');
+    await writeFile(
+      inputPath,
+      JSON.stringify([
+        {
+          type: 'withdrawal',
+          date: '2026-06-08',
+          source_id: '8',
+          destination_name: 'Coffee Shop',
+          amount: '12.34',
+          description: 'Coffee',
+          category_name: 'Food',
+          notes: 'receipt',
+          tags: ['wechat'],
+        },
+      ]),
+    );
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: '100' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+    const result = await runCli([
+      'transactions',
+      'import',
+      '--input',
+      inputPath,
+      '--confirm',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/transactions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({
+      transactions: [
+        {
+          type: 'withdrawal',
+          date: '2026-06-08',
+          source_id: '8',
+          destination_name: 'Coffee Shop',
+          amount: '12.34',
+          description: 'Coffee',
+          category_name: 'Food',
+          notes: 'receipt',
+          tags: ['wechat'],
+        },
+      ],
+    });
+    expect(JSON.parse(result.logs.join('\n'))).toEqual({
+      mode: 'confirm',
+      summary: {
+        total: 1,
+        create: 1,
+        duplicate: 0,
+        ambiguous: 0,
+        submitted: 1,
+      },
+      rows: [expect.objectContaining({ row: 1, status: 'created' })],
+      response: { data: { id: '100' } },
     });
   });
 
