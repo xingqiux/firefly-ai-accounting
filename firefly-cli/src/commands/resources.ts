@@ -49,6 +49,7 @@ interface TransactionImportOptions {
   input?: string;
   dryRun?: boolean;
   confirm?: boolean;
+  timezone?: string;
 }
 
 interface ResourceDefinition {
@@ -218,6 +219,10 @@ function registerTransactions(program: Command): void {
     .requiredOption('--input <file>', 'Read transactions from a JSON file.')
     .option('--dry-run', 'Preview rows without creating transactions.')
     .option('--confirm', 'Create rows that are not duplicates or ambiguous.')
+    .option(
+      '--timezone <iana>',
+      'Source timezone for local transaction dates, for example Asia/Shanghai.',
+    )
     .action(async function (options: TransactionImportOptions) {
       if (options.dryRun && options.confirm) {
         throw new FireflyInputError('Use either --dry-run or --confirm, not both.');
@@ -226,6 +231,7 @@ function registerTransactions(program: Command): void {
       const result = await importTransactions(context.client, {
         input: options.input!,
         mode: options.confirm ? 'confirm' : 'dry-run',
+        timezone: options.timezone,
       });
       console.log(renderOutput(result, { format: context.format }));
     });

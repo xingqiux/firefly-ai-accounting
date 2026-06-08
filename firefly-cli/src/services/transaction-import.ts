@@ -6,10 +6,12 @@ import type { FireflyHttpClient } from '../core/http-client.js';
 export interface TransactionImportOptions {
   input: string;
   mode: 'dry-run' | 'confirm';
+  timezone?: string;
 }
 
 export interface TransactionImportReport {
   mode: 'dry-run' | 'confirm';
+  timezone?: string;
   summary: {
     total: number;
     create: number;
@@ -25,6 +27,8 @@ export interface TransactionImportRowReport {
   row: number;
   status: 'create' | 'duplicate' | 'ambiguous' | 'created';
   transaction: FireflyTransactionImportRow;
+  originalDate?: string;
+  fireflyDate?: string;
   reasons?: string[];
   duplicateIds?: string[];
 }
@@ -32,6 +36,7 @@ export interface TransactionImportRowReport {
 export interface FireflyTransactionImportRow {
   type?: string;
   date?: string;
+  original_date?: string;
   source_id?: string;
   source_name?: string;
   destination_id?: string;
@@ -58,7 +63,7 @@ export async function importTransactions(
   client: FireflyHttpClient,
   options: TransactionImportOptions,
 ): Promise<TransactionImportReport> {
-  const transactions = await readTransactions(options.input);
+  const transactions = applyTimezone(await readTransactions(options.input), options.timezone);
   const existing = await fetchExistingTransactions(client, transactions);
   const rows = transactions.map((transaction, index) =>
     classifyTransaction(index + 1, transaction, existing),
@@ -66,24 +71,26 @@ export async function importTransactions(
   const summary = summarize(rows);
 
   if (options.mode === 'dry-run') {
-    return { mode: options.mode, summary, rows };
+    return stripUndefined({ mode: options.mode, timezone: options.timezone, summary, rows });
   }
 
   const createRows = rows.filter((row) => row.status === 'create');
   if (createRows.length === 0) {
     return {
       mode: options.mode,
+      timezone: options.timezone,
       summary: { ...summary, submitted: 0 },
       rows,
     };
   }
 
   const response = await client.request('POST', '/api/v1/transactions', {
-    json: { transactions: createRows.map((row) => row.transaction) },
+    json: { transactions: createRows.map((row) => buildFireflyTransaction(row.transaction)) },
   });
 
   return {
     mode: options.mode,
+    timezone: options.timezone,
     summary: { ...summary, submitted: createRows.length },
     rows: rows.map((row) => (row.status === 'create' ? { ...row, status: 'created' } : row)),
     response,
@@ -139,6 +146,7 @@ async function fetchExistingTransactions(
   const dates = transactions
     .map((transaction) => transaction.date)
     .filter(isNonEmptyString)
+    .map(dateOnly)
     .sort();
   if (dates.length === 0) {
     return [];
@@ -193,18 +201,82 @@ function classifyTransaction(
   existing: ExistingTransaction[],
 ): TransactionImportRowReport {
   const reasons = validateTransaction(transaction);
+  const dates = extractDateMetadata(transaction);
   if (reasons.length > 0) {
-    return { row, status: 'ambiguous', transaction, reasons };
+    return { row, status: 'ambiguous', transaction, ...dates, reasons };
   }
 
   const duplicateIds = existing
     .filter((candidate) => isLikelyDuplicate(transaction, candidate))
     .map((candidate) => candidate.id);
   if (duplicateIds.length > 0) {
-    return { row, status: 'duplicate', transaction, duplicateIds };
+    return { row, status: 'duplicate', transaction, ...dates, duplicateIds };
   }
 
-  return { row, status: 'create', transaction };
+  return { row, status: 'create', transaction, ...dates };
+}
+
+function applyTimezone(
+  transactions: FireflyTransactionImportRow[],
+  timezone?: string,
+): FireflyTransactionImportRow[] {
+  if (!timezone) {
+    return transactions;
+  }
+  return transactions.map((transaction) => {
+    if (!transaction.date) {
+      return transaction;
+    }
+    return {
+      ...transaction,
+      original_date: transaction.date,
+      date: convertLocalDateToFireflyDate(transaction.date, timezone),
+    };
+  });
+}
+
+function buildFireflyTransaction(
+  transaction: FireflyTransactionImportRow,
+): FireflyTransactionImportRow {
+  const fireflyTransaction = { ...transaction };
+  delete fireflyTransaction.original_date;
+  return fireflyTransaction;
+}
+
+function convertLocalDateToFireflyDate(value: string, timezone: string): string {
+  const offset = timezoneOffset(timezone);
+  const normalized = value.trim().replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return `${normalized}T00:00:00${offset}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized)) {
+    return `${normalized}:00${offset}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(normalized)) {
+    return `${normalized}${offset}`;
+  }
+  return value;
+}
+
+function timezoneOffset(timezone: string): string {
+  if (timezone === 'Asia/Shanghai') {
+    return '+08:00';
+  }
+  throw new FireflyInputError(
+    `Unsupported timezone "${timezone}". Supported timezones: Asia/Shanghai.`,
+  );
+}
+
+function extractDateMetadata(
+  transaction: FireflyTransactionImportRow & { original_date?: string },
+): Pick<TransactionImportRowReport, 'originalDate' | 'fireflyDate'> {
+  if (!transaction.original_date) {
+    return {};
+  }
+  return {
+    originalDate: transaction.original_date,
+    fireflyDate: transaction.date,
+  };
 }
 
 function validateTransaction(transaction: FireflyTransactionImportRow): string[] {

@@ -103,6 +103,7 @@ describe('base commands', () => {
       join(rootPath, '.env'),
       [
         'APP_URL=http://127.0.0.1:8000',
+        'TZ=Europe/Amsterdam',
         `DB_DATABASE=${join(rootPath, 'storage', 'database', 'database.sqlite')}`,
       ].join('\n'),
     );
@@ -151,6 +152,14 @@ describe('base commands', () => {
             'APP_URL points to http://127.0.0.1:8000 but checked URL is http://127.0.0.1:8001.',
           expected: 'http://127.0.0.1:8001',
           actual: 'http://127.0.0.1:8000',
+        },
+        {
+          name: 'timezone',
+          status: 'warn',
+          message:
+            'TZ is Europe/Amsterdam but local accounting imports expect Asia/Shanghai. Update firefly-iii/.env or pass --timezone when importing.',
+          expected: 'Asia/Shanghai',
+          actual: 'Europe/Amsterdam',
         },
         {
           name: 'v2-assets',

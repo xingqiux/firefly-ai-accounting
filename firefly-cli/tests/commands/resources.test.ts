@@ -335,6 +335,86 @@ describe('resource commands', () => {
     });
   });
 
+  test('transactions import converts source timezone before preview and confirm', async () => {
+    const inputPath = join(tempDir, 'transactions.json');
+    await writeFile(
+      inputPath,
+      JSON.stringify([
+        {
+          type: 'withdrawal',
+          date: '2026-06-08 10:59:11',
+          source_id: '12',
+          destination_name: '邵火火鲍汁黄焖鸡',
+          amount: '23.80',
+          description: '邵火火鲍汁黄焖鸡外卖',
+        },
+      ]),
+    );
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: '101' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+    const result = await runCli([
+      'transactions',
+      'import',
+      '--input',
+      inputPath,
+      '--timezone',
+      'Asia/Shanghai',
+      '--confirm',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/transactions?start=2026-06-08&end=2026-06-08&limit=500',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({
+      transactions: [
+        {
+          type: 'withdrawal',
+          date: '2026-06-08T10:59:11+08:00',
+          source_id: '12',
+          destination_name: '邵火火鲍汁黄焖鸡',
+          amount: '23.80',
+          description: '邵火火鲍汁黄焖鸡外卖',
+        },
+      ],
+    });
+    expect(JSON.parse(result.logs.join('\n'))).toEqual({
+      mode: 'confirm',
+      timezone: 'Asia/Shanghai',
+      summary: {
+        total: 1,
+        create: 1,
+        duplicate: 0,
+        ambiguous: 0,
+        submitted: 1,
+      },
+      rows: [
+        expect.objectContaining({
+          row: 1,
+          status: 'created',
+          originalDate: '2026-06-08 10:59:11',
+          fireflyDate: '2026-06-08T10:59:11+08:00',
+        }),
+      ],
+      response: { data: { id: '101' } },
+    });
+  });
+
   test('accounts create builds an asset account payload from shortcut flags', async () => {
     const fetchMock = mockJsonFetch();
 

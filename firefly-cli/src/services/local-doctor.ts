@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const ASSET_ACCOUNT_TYPE = 'Asset account';
+const DEFAULT_ACCOUNTING_TIMEZONE = 'Asia/Shanghai';
 
 export interface LocalDoctorOptions {
   root: string;
@@ -41,6 +42,7 @@ export async function runLocalDoctor(options: LocalDoctorOptions): Promise<Local
     await checkRoot(root),
     await checkDatabase(databasePath),
     checkAppUrl(env, appUrl),
+    checkTimezone(env),
     await checkV2Assets(root),
     await checkV1Assets(root),
     await checkFrontpageAccounts(databasePath, options.sqliteQuery ?? querySqlite),
@@ -111,6 +113,34 @@ function checkAppUrl(env: Record<string, string>, checkedUrl: string): LocalDoct
     status: 'ok',
     message: `APP_URL matches ${checkedUrl}.`,
     expected: checkedUrl,
+    actual,
+  };
+}
+
+function checkTimezone(env: Record<string, string>): LocalDoctorCheck {
+  const actual = env.TZ;
+  if (!actual) {
+    return {
+      name: 'timezone',
+      status: 'warn',
+      message: `TZ is not set. Local accounting imports expect ${DEFAULT_ACCOUNTING_TIMEZONE}.`,
+      expected: DEFAULT_ACCOUNTING_TIMEZONE,
+    };
+  }
+  if (actual !== DEFAULT_ACCOUNTING_TIMEZONE) {
+    return {
+      name: 'timezone',
+      status: 'warn',
+      message: `TZ is ${actual} but local accounting imports expect ${DEFAULT_ACCOUNTING_TIMEZONE}. Update firefly-iii/.env or pass --timezone when importing.`,
+      expected: DEFAULT_ACCOUNTING_TIMEZONE,
+      actual,
+    };
+  }
+  return {
+    name: 'timezone',
+    status: 'ok',
+    message: `TZ matches ${DEFAULT_ACCOUNTING_TIMEZONE}.`,
+    expected: DEFAULT_ACCOUNTING_TIMEZONE,
     actual,
   };
 }

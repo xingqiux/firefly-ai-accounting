@@ -75,7 +75,7 @@ Local Firefly III diagnostics:
 ffc doctor local --root ../firefly-iii --url http://127.0.0.1:8000 --format json
 ```
 
-The local doctor checks the Firefly root, SQLite database path, `APP_URL`, v2 Vite assets, v1 transaction UI assets, frontpage account preferences, and HTTP reachability. If the v1 or v2 assets are missing, run the suggested asset build command from `firefly-iii/` and hard refresh the browser.
+The local doctor checks the Firefly root, SQLite database path, `APP_URL`, `TZ`, v2 Vite assets, v1 transaction UI assets, frontpage account preferences, and HTTP reachability. This project expects local accounting data in `Asia/Shanghai`; if your source bills use another timezone, pass it explicitly during import. If the v1 or v2 assets are missing, run the suggested asset build command from `firefly-iii/` and hard refresh the browser.
 
 ## Resources
 
@@ -139,10 +139,10 @@ Batch transaction import supports a JSON preview before writing:
 
 ```bash
 ffc transactions import --input transactions.json --dry-run --format json
-ffc transactions import --input transactions.json --confirm --format json
+ffc transactions import --input transactions.json --timezone Asia/Shanghai --confirm --format json
 ```
 
-The input may be a JSON array or an object with a `transactions` array. Rows can include `type`, `date`, `source_id` or `source_name`, `destination_id` or `destination_name`, `amount`, `description`, `category_name`, `notes`, and `tags`. The dry run reports rows as `create`, `duplicate`, or `ambiguous`; confirmation submits only create-ready rows.
+The input may be a JSON array or an object with a `transactions` array. Rows can include `type`, `date`, `source_id` or `source_name`, `destination_id` or `destination_name`, `amount`, `description`, `category_name`, `notes`, and `tags`. The dry run reports rows as `create`, `duplicate`, or `ambiguous`; confirmation submits only create-ready rows. Use `--timezone Asia/Shanghai` for local bill timestamps such as Alipay, WeChat, and bank statements; dry-run output shows `originalDate` and `fireflyDate` when conversion is applied.
 
 Webhook manual submission:
 
