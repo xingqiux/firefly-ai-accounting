@@ -321,6 +321,11 @@ Goal: create inspectable backend task management without IMAP.
   - `ffc bill-inbox secret submit <taskId> --value <password>`
   - `ffc bill-inbox retry <taskId>`
   - `ffc bill-inbox ignore <taskId>`
+- Add Firefly III backend execution entrypoint:
+  - `php artisan firefly-iii:process-bill-tasks`
+  - routes unknown tasks to `unknown`
+  - opens generic secret challenges for encrypted artifacts
+  - marks ready tasks as failed with `processor_missing` until a source processor is registered
 - Add tests around state transitions and JSON output.
 
 ### Phase 2: IMAP Sync And Archiving
