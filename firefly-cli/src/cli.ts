@@ -5,6 +5,7 @@ import { Command } from 'commander';
 
 import { registerAuthCommands } from './commands/auth.js';
 import { registerBaseCommands } from './commands/base.js';
+import { registerBillInboxCommands } from './commands/bill-inbox.js';
 import { registerPlatformCommands } from './commands/platform.js';
 import { registerResourceCommands } from './commands/resources.js';
 import type { OutputFormat } from './core/config-store.js';
@@ -22,6 +23,7 @@ export function createProgram(): Command {
     .option('--timeout <ms>', 'Request timeout in milliseconds.');
   registerAuthCommands(program);
   registerBaseCommands(program);
+  registerBillInboxCommands(program);
   registerResourceCommands(program);
   registerPlatformCommands(program);
   return program;
