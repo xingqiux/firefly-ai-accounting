@@ -26,6 +26,7 @@ use FireflyIII\Models\Account;
 use FireflyIII\Models\Attachment;
 use FireflyIII\Models\AvailableBudget;
 use FireflyIII\Models\Bill;
+use FireflyIII\Models\BillTask;
 use FireflyIII\Models\Budget;
 use FireflyIII\Models\BudgetLimit;
 use FireflyIII\Models\Category;
@@ -71,6 +72,7 @@ return [
         'attachment'                => Attachment::class,
         'availableBudget'           => AvailableBudget::class,
         'bill'                      => Bill::class,
+        'billTask'                  => BillTask::class,
         'budget'                    => Budget::class,
         'budgetLimit'               => BudgetLimit::class,
         'category'                  => Category::class,

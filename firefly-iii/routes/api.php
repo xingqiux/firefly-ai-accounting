@@ -398,6 +398,24 @@ Route::group(
     }
 );
 
+// Bill ingestion task API routes:
+Route::group(
+    [
+        'namespace' => 'FireflyIII\Api\V1\Controllers\Models\BillTask',
+        'prefix'    => 'v1/bill-tasks',
+        'as'        => 'api.v1.bill-tasks.',
+    ],
+    static function (): void {
+        Route::get('', ['uses' => 'ShowController@index', 'as' => 'index']);
+        Route::get('{billTask}', ['uses' => 'ShowController@show', 'as' => 'show']);
+        Route::get('{billTask}/artifacts', ['uses' => 'ListController@artifacts', 'as' => 'artifacts']);
+        Route::get('{billTask}/events', ['uses' => 'ListController@events', 'as' => 'events']);
+        Route::post('{billTask}/secret', ['uses' => 'ActionController@secret', 'as' => 'secret']);
+        Route::post('{billTask}/retry', ['uses' => 'ActionController@retry', 'as' => 'retry']);
+        Route::post('{billTask}/ignore', ['uses' => 'ActionController@ignore', 'as' => 'ignore']);
+    }
+);
+
 // Available Budget API routes:
 Route::group(
     [

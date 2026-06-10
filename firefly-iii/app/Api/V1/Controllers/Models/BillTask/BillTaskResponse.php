@@ -1,0 +1,194 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FireflyIII\Api\V1\Controllers\Models\BillTask;
+
+use FireflyIII\Models\BillArtifact;
+use FireflyIII\Models\BillMailMessage;
+use FireflyIII\Models\BillSecretChallenge;
+use FireflyIII\Models\BillTask;
+use FireflyIII\Models\BillTaskEvent;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Pagination\LengthAwarePaginator;
+
+trait BillTaskResponse
+{
+    protected function collectionResponse(LengthAwarePaginator $paginator): array
+    {
+        return [
+            'data'  => $paginator->getCollection()->map(fn (BillTask $task): array => $this->taskResource($task))->values()->all(),
+            'meta'  => [
+                'pagination' => [
+                    'total'        => $paginator->total(),
+                    'count'        => $paginator->count(),
+                    'per_page'     => $paginator->perPage(),
+                    'current_page' => $paginator->currentPage(),
+                    'total_pages'  => $paginator->lastPage(),
+                ],
+            ],
+            'links' => [
+                'self'  => $paginator->url($paginator->currentPage()),
+                'first' => $paginator->url(1),
+                'last'  => $paginator->url($paginator->lastPage()),
+                'prev'  => $paginator->previousPageUrl(),
+                'next'  => $paginator->nextPageUrl(),
+            ],
+        ];
+    }
+
+    protected function itemResponse(BillTask $task, bool $includeRelated = false): array
+    {
+        $response = [
+            'data' => $this->taskResource($task),
+        ];
+
+        if ($includeRelated) {
+            $included             = [];
+            $mailMessage          = $task->mailMessage;
+            $currentChallenge     = $task->currentSecretChallenge;
+            if ($mailMessage instanceof BillMailMessage) {
+                $included[] = $this->mailMessageResource($mailMessage);
+            }
+            foreach ($task->artifacts as $artifact) {
+                $included[] = $this->artifactResource($artifact);
+            }
+            if ($currentChallenge instanceof BillSecretChallenge) {
+                $included[] = $this->secretChallengeResource($currentChallenge);
+            }
+            foreach ($task->events as $event) {
+                $included[] = $this->eventResource($event);
+            }
+            $response['included'] = $included;
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param EloquentCollection<int, BillArtifact> $artifacts
+     */
+    protected function artifactCollectionResponse(EloquentCollection $artifacts): array
+    {
+        return [
+            'data' => $artifacts->map(fn (BillArtifact $artifact): array => $this->artifactResource($artifact))->values()->all(),
+        ];
+    }
+
+    /**
+     * @param EloquentCollection<int, BillTaskEvent> $events
+     */
+    protected function eventCollectionResponse(EloquentCollection $events): array
+    {
+        return [
+            'data' => $events->map(fn (BillTaskEvent $event): array => $this->eventResource($event))->values()->all(),
+        ];
+    }
+
+    protected function taskResource(BillTask $task): array
+    {
+        return [
+            'type'          => 'bill-tasks',
+            'id'            => (string) $task->id,
+            'attributes'    => [
+                'source'                      => $task->source,
+                'profile_id'                  => $task->profile_id,
+                'status'                      => $task->status,
+                'received_at'                 => optional($task->received_at)->toAtomString(),
+                'summary'                     => $task->summary,
+                'current_secret_challenge_id' => null === $task->current_secret_challenge_id ? null : (string) $task->current_secret_challenge_id,
+                'error_code'                  => $task->error_code,
+                'error_message'               => $task->error_message,
+                'metadata'                    => $task->metadata,
+                'created_at'                  => optional($task->created_at)->toAtomString(),
+                'updated_at'                  => optional($task->updated_at)->toAtomString(),
+            ],
+            'relationships' => [
+                'mail_message'      => [
+                    'data' => null === $task->bill_mail_message_id ? null : [
+                        'type' => 'bill-mail-messages',
+                        'id'   => (string) $task->bill_mail_message_id,
+                    ],
+                ],
+                'current_challenge' => [
+                    'data' => null === $task->current_secret_challenge_id ? null : [
+                        'type' => 'bill-secret-challenges',
+                        'id'   => (string) $task->current_secret_challenge_id,
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    protected function mailMessageResource(BillMailMessage $message): array
+    {
+        return [
+            'type'       => 'bill-mail-messages',
+            'id'         => (string) $message->id,
+            'attributes' => [
+                'message_id'     => $message->message_id,
+                'mailbox'        => $message->mailbox,
+                'from_address'   => $message->from_address,
+                'to_address'     => $message->to_address,
+                'subject'        => $message->subject,
+                'received_at'    => optional($message->received_at)->toAtomString(),
+                'raw_path'       => $message->raw_path,
+                'body_text_path' => $message->body_text_path,
+                'body_html_path' => $message->body_html_path,
+                'checksum'       => $message->checksum,
+                'sync_cursor'    => $message->sync_cursor,
+            ],
+        ];
+    }
+
+    protected function artifactResource(BillArtifact $artifact): array
+    {
+        return [
+            'type'       => 'bill-artifacts',
+            'id'         => (string) $artifact->id,
+            'attributes' => [
+                'bill_task_id'             => (string) $artifact->bill_task_id,
+                'kind'                     => $artifact->kind,
+                'filename'                 => $artifact->filename,
+                'path'                     => $artifact->path,
+                'checksum'                 => $artifact->checksum,
+                'encrypted'                => $artifact->encrypted,
+                'derived_from_artifact_id' => null === $artifact->derived_from_artifact_id ? null : (string) $artifact->derived_from_artifact_id,
+                'metadata'                 => $artifact->metadata,
+                'created_at'               => optional($artifact->created_at)->toAtomString(),
+            ],
+        ];
+    }
+
+    protected function secretChallengeResource(BillSecretChallenge $challenge): array
+    {
+        return [
+            'type'       => 'bill-secret-challenges',
+            'id'         => (string) $challenge->id,
+            'attributes' => [
+                'bill_task_id' => (string) $challenge->bill_task_id,
+                'kind'         => $challenge->kind,
+                'prompt'       => $challenge->prompt,
+                'status'       => $challenge->status,
+                'attempts'     => $challenge->attempts,
+                'created_at'   => optional($challenge->created_at)->toAtomString(),
+                'consumed_at'  => optional($challenge->consumed_at)->toAtomString(),
+            ],
+        ];
+    }
+
+    protected function eventResource(BillTaskEvent $event): array
+    {
+        return [
+            'type'       => 'bill-task-events',
+            'id'         => (string) $event->id,
+            'attributes' => [
+                'bill_task_id' => (string) $event->bill_task_id,
+                'event_type'   => $event->event_type,
+                'message'      => $event->message,
+                'metadata'     => $event->metadata,
+                'created_at'   => optional($event->created_at)->toAtomString(),
+            ],
+        ];
+    }
+}

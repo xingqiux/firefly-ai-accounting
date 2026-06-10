@@ -152,12 +152,12 @@ ffc webhooks submit <id>
 
 ## Bill Inbox
 
-`bill-inbox` is the local task layer for bill emails and artifacts. It does not sync IMAP yet; the first version provides the common task store and CLI controls that later mailbox workers and source processors will use.
+`bill-inbox` is the CLI control surface for Firefly III bill email ingestion tasks. Task state, artifacts, events, and secret challenges live in the Firefly III backend; `ffc` only calls the configured Firefly API.
 
-By default, local state is stored in `firefly-cli-data/inbox.json`. Override it with:
+Configure a Firefly profile before using these commands:
 
 ```bash
-FIREFLY_BILLS_DATA_DIR=/path/to/data ffc bill-inbox list --format json
+ffc auth set-token --url http://127.0.0.1:8000 --token <personal-access-token>
 ```
 
 Inspect and progress tasks:
@@ -168,6 +168,7 @@ ffc bill-inbox show <taskId> --format json
 ffc bill-inbox artifacts <taskId> --format json
 ffc bill-inbox events <taskId> --format json
 ffc bill-inbox secret submit <taskId> --value <password> --format json
+ffc bill-inbox retry <taskId> --format json
 ffc bill-inbox ignore <taskId> --format json
 ```
 

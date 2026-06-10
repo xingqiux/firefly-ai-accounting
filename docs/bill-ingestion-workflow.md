@@ -10,7 +10,9 @@ The project will use a dedicated bill mailbox as an incoming-only channel. Banks
 
 Firefly III remains the accounting backend.
 
-The bill ingestion layer owns:
+The bill ingestion layer is part of the Firefly III backend. Firefly III owns durable storage, task state, event logs, secret challenges, and background execution. `ffc` is only an API client for inspection and manual control.
+
+The backend bill ingestion layer owns:
 
 - IMAP mailbox sync
 - raw email and attachment archiving
@@ -20,7 +22,12 @@ The bill ingestion layer owns:
 - normalized artifacts and parser outputs
 - transaction candidates
 - matching candidates against Firefly III transactions
-- CLI inspection and manual workflow controls
+
+The CLI owns:
+
+- authenticated calls to Firefly III bill task APIs
+- JSON/table output for users and AI agents
+- manual controls such as submit secret, retry, and ignore
 
 Source-specific processors are separate from the common workflow. Alipay, WeChat, CMB, or other bank logic should plug into the same task model later.
 
@@ -193,13 +200,22 @@ Secrets should be supplied through CLI or future UI at processing time. The syst
 
 ## Storage Layout
 
-Use project-owned local storage outside the Firefly III tree.
+Use Firefly III database tables for task state and Firefly-controlled artifact storage for files. The CLI must not maintain a separate task database.
 
-Suggested default:
+Initial database tables:
 
 ```text
-firefly-cli-data/
-  inbox.db
+bill_mail_messages
+bill_tasks
+bill_artifacts
+bill_task_events
+bill_secret_challenges
+```
+
+Suggested file layout under Firefly-owned storage:
+
+```text
+bill-inbox/
   mail/
     raw/<mail-id>.eml
     body/<mail-id>.txt
@@ -209,31 +225,21 @@ firefly-cli-data/
     derived/<task-id>/
   parsed/
     <task-id>.json
-  logs/
 ```
 
-The exact default path should be configurable, for example:
-
-- `FIREFLY_BILLS_DATA_DIR`
-- `--data-dir <path>`
+The exact storage disk/path should be configured on the Firefly III side so workers, API controllers, future UI, and CLI clients observe the same state.
 
 ## CLI Surface
 
 First version should focus on visibility and manual progression.
 
 ```bash
-ffc bill-inbox sync
 ffc bill-inbox list
 ffc bill-inbox show <taskId>
 ffc bill-inbox artifacts <taskId>
 ffc bill-inbox events <taskId>
 ffc bill-inbox secret submit <taskId> --value <password>
-ffc bill-inbox route <taskId> --profile <profileId>
 ffc bill-inbox retry <taskId>
-ffc bill-inbox parse <taskId>
-ffc bill-inbox candidates <taskId>
-ffc bill-inbox match <taskId>
-ffc bill-inbox import <taskId> --confirm
 ffc bill-inbox ignore <taskId>
 ```
 
@@ -242,7 +248,8 @@ The AI agent should be able to inspect every stage with JSON output:
 ```bash
 ffc bill-inbox list --format json
 ffc bill-inbox show <taskId> --format json
-ffc bill-inbox candidates <taskId> --format json
+ffc bill-inbox artifacts <taskId> --format json
+ffc bill-inbox events <taskId> --format json
 ```
 
 ## Processing Profile Contract
@@ -293,13 +300,20 @@ Every failure should:
 
 ## Implementation Plan
 
-### Phase 1: Generic Task Store And CLI
+### Phase 1: Firefly Backend Task Store And CLI Controls
 
-Goal: create inspectable local task management without IMAP.
+Goal: create inspectable backend task management without IMAP.
 
-- Add local `inbox.db` or JSON-backed store abstraction.
-- Add `BillTask`, `MailMessage`, `BillArtifact`, `SecretChallenge`, and event records.
-- Add CLI:
+- Add Firefly III tables/models for `BillTask`, `MailMessage`, `BillArtifact`, `SecretChallenge`, and event records.
+- Add Firefly III API endpoints:
+  - `GET /api/v1/bill-tasks`
+  - `GET /api/v1/bill-tasks/{id}`
+  - `GET /api/v1/bill-tasks/{id}/artifacts`
+  - `GET /api/v1/bill-tasks/{id}/events`
+  - `POST /api/v1/bill-tasks/{id}/secret`
+  - `POST /api/v1/bill-tasks/{id}/retry`
+  - `POST /api/v1/bill-tasks/{id}/ignore`
+- Add `ffc` commands that call the Firefly III API:
   - `ffc bill-inbox list`
   - `ffc bill-inbox show <taskId>`
   - `ffc bill-inbox artifacts <taskId>`
@@ -313,8 +327,8 @@ Goal: create inspectable local task management without IMAP.
 
 Goal: connect the dedicated mailbox and create tasks.
 
-- Add IMAP configuration.
-- Implement `ffc bill-inbox sync`.
+- Add IMAP configuration to Firefly III.
+- Implement a Firefly III worker or scheduled command for mailbox sync.
 - Fetch new messages idempotently by message id/checksum.
 - Store raw `.eml`, body text/html, and original attachments.
 - Create `BillTask` records in `archived` state.
@@ -328,7 +342,7 @@ Goal: route tasks without parsing source-specific bill formats.
 - Implement match rules for sender, subject, body snippets, attachment names, and artifact types.
 - Move matched tasks to `routed` or `needs_secret`.
 - Move unmatched tasks to `unknown`.
-- Add CLI `ffc bill-inbox route <taskId> --profile <profileId>`.
+- Add API and CLI/manual UI controls for route override when needed.
 
 ### Phase 4: Secret Challenge And Artifact Expansion
 
@@ -346,7 +360,7 @@ Goal: allow source-specific processors to plug in later.
 
 - Define parser input/output JSON contract.
 - Add a no-op parser for tests.
-- Add `ffc bill-inbox parse <taskId>`.
+- Add backend parse action or worker step.
 - Store `BillDocument` and `TransactionCandidate` JSON.
 
 ### Phase 6: Firefly Matching And Import
@@ -354,14 +368,12 @@ Goal: allow source-specific processors to plug in later.
 Goal: reuse existing transaction import matching concepts.
 
 - Compare candidates with Firefly transactions by date, amount, merchant, and account hints.
-- Add `ffc bill-inbox candidates <taskId>`.
-- Add `ffc bill-inbox match <taskId>`.
-- Add `ffc bill-inbox import <taskId> --confirm`.
+- Add candidate/match/import backend APIs.
+- Add `ffc` commands for candidates, match, and confirmed import once backend APIs exist.
 
 ## Open Design Questions
 
-- Should the task store be SQLite from the beginning or start with JSON files?
-- Where should local sensitive data live by default?
-- Should mailbox sync be a CLI command only at first, or should a daemon entrypoint be included?
+- Which Firefly storage disk/path should hold raw emails and artifacts?
+- Should mailbox sync be an Artisan command, queued job, scheduler entry, or all three?
 - Should profile configs live in repo, user config, or both?
-- How should future UI share the same task store and secret challenge flow?
+- How should future UI expose the same task APIs and secret challenge flow?

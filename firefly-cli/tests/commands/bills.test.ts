@@ -1,214 +1,173 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { ConfigStore } from '../../src/core/config-store.js';
 import { runCli } from '../helpers/run-cli.js';
 
 let tempDir: string;
-let dataDir: string;
-const previousDataDir = process.env.FIREFLY_BILLS_DATA_DIR;
+let configPath: string;
+const previousConfigEnv = process.env.FIREFLY_CLI_CONFIG;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'firefly-bills-'));
-  dataDir = join(tempDir, 'data');
-  process.env.FIREFLY_BILLS_DATA_DIR = dataDir;
-  await mkdir(dataDir, { recursive: true });
-  await writeFile(
-    join(dataDir, 'inbox.json'),
-    JSON.stringify(
-      {
-        tasks: [
-          {
-            id: 'task-1',
-            mailMessageId: 'mail-1',
-            source: 'cmb',
-            profileId: 'cmb-credit-card',
-            status: 'needs_secret',
-            receivedAt: '2026-06-10T09:30:00+08:00',
-            summary: '招商银行信用卡电子账单',
-            currentChallengeId: 'challenge-1',
-          },
-          {
-            id: 'task-2',
-            mailMessageId: 'mail-2',
-            source: 'unknown',
-            status: 'unknown',
-            receivedAt: '2026-06-10T10:00:00+08:00',
-            summary: '未识别账单邮件',
-          },
-        ],
-        mailMessages: [
-          {
-            id: 'mail-1',
-            messageId: '<mail-1@example.com>',
-            mailbox: 'bills@example.com',
-            from: 'bank@example.com',
-            to: 'bills@example.com',
-            subject: '招商银行信用卡电子账单',
-            receivedAt: '2026-06-10T09:30:00+08:00',
-            rawPath: 'mail/raw/mail-1.eml',
-            checksum: 'mail-checksum',
-          },
-        ],
-        artifacts: [
-          {
-            id: 'artifact-1',
-            taskId: 'task-1',
-            kind: 'zip',
-            filename: 'statement.zip',
-            path: 'artifacts/original/task-1/statement.zip',
-            checksum: 'artifact-checksum',
-            encrypted: true,
-          },
-        ],
-        challenges: [
-          {
-            id: 'challenge-1',
-            taskId: 'task-1',
-            kind: 'password',
-            prompt: '请输入账单解压密码',
-            status: 'open',
-            attempts: 0,
-            createdAt: '2026-06-10T09:31:00+08:00',
-          },
-        ],
-        events: [
-          {
-            id: 'event-1',
-            taskId: 'task-1',
-            type: 'task.created',
-            at: '2026-06-10T09:30:01+08:00',
-            message: '任务已创建',
-          },
-          {
-            id: 'event-2',
-            taskId: 'task-1',
-            type: 'challenge.created',
-            at: '2026-06-10T09:31:00+08:00',
-            message: '需要密码',
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
+  tempDir = await mkdtemp(join(tmpdir(), 'firefly-bill-tasks-'));
+  configPath = join(tempDir, 'config.json');
+  process.env.FIREFLY_CLI_CONFIG = configPath;
+  await new ConfigStore(configPath).setToken({
+    profile: 'local',
+    baseUrl: 'http://127.0.0.1:8000',
+    token: 'secret-token',
+  });
 });
 
 afterEach(async () => {
-  if (previousDataDir === undefined) {
-    delete process.env.FIREFLY_BILLS_DATA_DIR;
+  if (previousConfigEnv === undefined) {
+    delete process.env.FIREFLY_CLI_CONFIG;
   } else {
-    process.env.FIREFLY_BILLS_DATA_DIR = previousDataDir;
+    process.env.FIREFLY_CLI_CONFIG = previousConfigEnv;
   }
+  vi.restoreAllMocks();
   await rm(tempDir, { force: true, recursive: true });
 });
 
-describe('bills commands', () => {
-  test('lists bill tasks from the local store', async () => {
+function mockJsonFetch(body: unknown = { data: [] }) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+  );
+}
+
+function requestBody(call: unknown[]): unknown {
+  const init = call[1] as RequestInit;
+  return JSON.parse(String(init.body));
+}
+
+describe('bill inbox commands', () => {
+  test('lists bill tasks from the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: [
+        {
+          id: '1',
+          attributes: {
+            source: 'cmb',
+            profile_id: 'cmb-credit-card',
+            status: 'needs_secret',
+            received_at: '2026-06-10T09:30:00+08:00',
+            summary: '招商银行信用卡电子账单',
+          },
+        },
+      ],
+    });
+
     const result = await runCli(['bill-inbox', 'list', '--format', 'json']);
 
-    expect(JSON.parse(result.logs.join('\n'))).toEqual([
-      {
-        id: 'task-1',
-        source: 'cmb',
-        profileId: 'cmb-credit-card',
-        status: 'needs_secret',
-        receivedAt: '2026-06-10T09:30:00+08:00',
-        summary: '招商银行信用卡电子账单',
-      },
-      {
-        id: 'task-2',
-        source: 'unknown',
-        status: 'unknown',
-        receivedAt: '2026-06-10T10:00:00+08:00',
-        summary: '未识别账单邮件',
-      },
-    ]);
-  });
-
-  test('shows a task with mail artifacts challenge and events', async () => {
-    const result = await runCli(['bill-inbox', 'show', 'task-1', '--format', 'json']);
-
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
+      }),
+    );
     expect(JSON.parse(result.logs.join('\n'))).toEqual({
-      task: expect.objectContaining({
-        id: 'task-1',
-        status: 'needs_secret',
-        currentChallengeId: 'challenge-1',
-      }),
-      mailMessage: expect.objectContaining({
-        id: 'mail-1',
-        subject: '招商银行信用卡电子账单',
-      }),
-      artifacts: [expect.objectContaining({ id: 'artifact-1', encrypted: true })],
-      currentChallenge: expect.objectContaining({ id: 'challenge-1', status: 'open' }),
-      events: [
-        expect.objectContaining({ id: 'event-1' }),
-        expect.objectContaining({ id: 'event-2' }),
+      data: [
+        {
+          id: '1',
+          attributes: expect.objectContaining({
+            source: 'cmb',
+            status: 'needs_secret',
+          }),
+        },
       ],
     });
   });
 
-  test('lists artifacts and events for a task', async () => {
-    const artifacts = await runCli(['bill-inbox', 'artifacts', 'task-1', '--format', 'json']);
-    const events = await runCli(['bill-inbox', 'events', 'task-1', '--format', 'json']);
-
-    expect(JSON.parse(artifacts.logs.join('\n'))).toEqual([
-      expect.objectContaining({ id: 'artifact-1', filename: 'statement.zip' }),
-    ]);
-    expect(JSON.parse(events.logs.join('\n'))).toEqual([
-      expect.objectContaining({ type: 'task.created' }),
-      expect.objectContaining({ type: 'challenge.created' }),
-    ]);
-  });
-
-  test('secret submit consumes the current challenge and marks task ready', async () => {
-    const result = await runCli([
-      'bill-inbox',
-      'secret',
-      'submit',
-      'task-1',
-      '--value',
-      '123456',
-      '--format',
-      'json',
-    ]);
-
-    expect(JSON.parse(result.logs.join('\n'))).toEqual({
-      taskId: 'task-1',
-      status: 'ready',
-      challengeId: 'challenge-1',
-      challengeStatus: 'consumed',
+  test('shows a bill task and related details from the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        id: '1',
+        type: 'bill-tasks',
+        attributes: {
+          source: 'cmb',
+          status: 'needs_secret',
+          summary: '招商银行信用卡电子账单',
+        },
+        relationships: {
+          mail_message: { data: { id: '1', type: 'bill-mail-messages' } },
+          current_challenge: { data: { id: '1', type: 'bill-secret-challenges' } },
+        },
+      },
+      included: [],
     });
 
-    const show = await runCli(['bill-inbox', 'show', 'task-1', '--format', 'json']);
-    expect(JSON.parse(show.logs.join('\n'))).toEqual(
-      expect.objectContaining({
-        task: expect.objectContaining({ status: 'ready' }),
-        currentChallenge: expect.objectContaining({
-          status: 'consumed',
-          attempts: 1,
-        }),
-      }),
+    await runCli(['bill-inbox', 'show', '1', '--format', 'json']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1',
+      expect.objectContaining({ method: 'GET' }),
     );
   });
 
-  test('ignore marks a task ignored and records an event', async () => {
-    const result = await runCli(['bill-inbox', 'ignore', 'task-2', '--format', 'json']);
+  test('lists bill task artifacts and events through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({ data: [] });
 
-    expect(JSON.parse(result.logs.join('\n'))).toEqual({
-      taskId: 'task-2',
-      status: 'ignored',
+    await runCli(['bill-inbox', 'artifacts', '1', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/artifacts',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    await runCli(['bill-inbox', 'events', '1', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/events',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  test('submits a secret through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        id: '1',
+        type: 'bill-tasks',
+        attributes: { status: 'ready' },
+      },
     });
 
-    const show = await runCli(['bill-inbox', 'show', 'task-2', '--format', 'json']);
-    expect(JSON.parse(show.logs.join('\n')).events).toEqual([
+    await runCli(['bill-inbox', 'secret', 'submit', '1', '--value', '123456', '--format', 'json']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/secret',
       expect.objectContaining({
-        type: 'task.ignored',
-        message: '任务已忽略',
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
       }),
-    ]);
+    );
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({ value: '123456' });
+  });
+
+  test('ignores and retries tasks through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        id: '1',
+        type: 'bill-tasks',
+        attributes: { status: 'ignored' },
+      },
+    });
+
+    await runCli(['bill-inbox', 'ignore', '1', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/ignore',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    await runCli(['bill-inbox', 'retry', '1', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/retry',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });

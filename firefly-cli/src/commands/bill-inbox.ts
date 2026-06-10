@@ -1,8 +1,9 @@
 import { Command } from 'commander';
 
+import { createCommandContext } from '../core/command-context.js';
 import { FireflyInputError } from '../core/errors.js';
 import { renderOutput } from '../core/output.js';
-import { BillInboxStore } from '../services/bill-inbox-store.js';
+import { BillTaskService } from '../services/bill-task-service.js';
 
 interface SecretSubmitOptions {
   value?: string;
@@ -11,28 +12,16 @@ interface SecretSubmitOptions {
 export function registerBillInboxCommands(program: Command): void {
   const bills = program
     .command('bill-inbox')
-    .description('Manage local bill email ingestion tasks.');
+    .description('Manage Firefly bill email ingestion tasks.');
 
   bills
     .command('list')
     .description('List bill inbox tasks.')
     .action(async function () {
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const tasks = await store.listTasks();
-      console.log(
-        renderOutput(
-          tasks.map((task) => ({
-            id: task.id,
-            source: task.source,
-            profileId: task.profileId,
-            status: task.status,
-            receivedAt: task.receivedAt,
-            summary: task.summary,
-          })),
-          { format: globals.format ?? 'table' },
-        ),
-      );
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const tasks = await service.list();
+      console.log(renderOutput(tasks, { format: context.format }));
     });
 
   bills
@@ -40,10 +29,10 @@ export function registerBillInboxCommands(program: Command): void {
     .description('Show a bill inbox task with related records.')
     .argument('<taskId>', 'Bill task identifier.')
     .action(async function (taskId: string) {
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const detail = await store.getTaskDetail(taskId);
-      console.log(renderOutput(detail, { format: globals.format ?? 'table' }));
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const detail = await service.show(taskId);
+      console.log(renderOutput(detail, { format: context.format }));
     });
 
   bills
@@ -51,10 +40,10 @@ export function registerBillInboxCommands(program: Command): void {
     .description('List artifacts for a bill inbox task.')
     .argument('<taskId>', 'Bill task identifier.')
     .action(async function (taskId: string) {
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const artifacts = await store.listArtifacts(taskId);
-      console.log(renderOutput(artifacts, { format: globals.format ?? 'table' }));
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const artifacts = await service.artifacts(taskId);
+      console.log(renderOutput(artifacts, { format: context.format }));
     });
 
   bills
@@ -62,10 +51,10 @@ export function registerBillInboxCommands(program: Command): void {
     .description('List event log entries for a bill inbox task.')
     .argument('<taskId>', 'Bill task identifier.')
     .action(async function (taskId: string) {
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const events = await store.listEvents(taskId);
-      console.log(renderOutput(events, { format: globals.format ?? 'table' }));
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const events = await service.events(taskId);
+      console.log(renderOutput(events, { format: context.format }));
     });
 
   bills
@@ -73,10 +62,21 @@ export function registerBillInboxCommands(program: Command): void {
     .description('Mark a bill inbox task as ignored.')
     .argument('<taskId>', 'Bill task identifier.')
     .action(async function (taskId: string) {
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const result = await store.ignoreTask(taskId);
-      console.log(renderOutput(result, { format: globals.format ?? 'table' }));
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.ignore(taskId);
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  bills
+    .command('retry')
+    .description('Requeue a bill inbox task for backend processing.')
+    .argument('<taskId>', 'Bill task identifier.')
+    .action(async function (taskId: string) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.retry(taskId);
+      console.log(renderOutput(result, { format: context.format }));
     });
 
   const secret = bills.command('secret').description('Manage bill inbox secret challenges.');
@@ -89,9 +89,9 @@ export function registerBillInboxCommands(program: Command): void {
       if (!options.value) {
         throw new FireflyInputError('Pass --value to submit a secret.');
       }
-      const store = new BillInboxStore();
-      const globals = this.optsWithGlobals();
-      const result = await store.submitSecret(taskId, options.value);
-      console.log(renderOutput(result, { format: globals.format ?? 'table' }));
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.submitSecret(taskId, options.value);
+      console.log(renderOutput(result, { format: context.format }));
     });
 }
