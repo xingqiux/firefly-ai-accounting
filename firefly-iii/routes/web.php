@@ -1387,6 +1387,20 @@ Route::group(
     }
 );
 
+// Bill inbox management.
+Route::group(
+    ['middleware' => 'user-full-auth', 'namespace' => 'FireflyIII\Http\Controllers\BillInbox', 'prefix' => 'bill-inbox', 'as' => 'bill-inbox.'],
+    static function (): void {
+        Route::get('', ['uses' => 'IndexController@index', 'as' => 'index']);
+        Route::get('settings', ['uses' => 'IndexController@settings', 'as' => 'settings']);
+        Route::post('settings', ['uses' => 'IndexController@postSettings', 'as' => 'settings.post']);
+        Route::get('{billTask}', ['uses' => 'IndexController@show', 'as' => 'show']);
+        Route::post('{billTask}/secret', ['uses' => 'IndexController@postSecret', 'as' => 'secret']);
+        Route::post('{billTask}/retry', ['uses' => 'IndexController@postRetry', 'as' => 'retry']);
+        Route::post('{billTask}/ignore', ['uses' => 'IndexController@postIgnore', 'as' => 'ignore']);
+    }
+);
+
 // Webhooks management
 Route::group(
     ['middleware' => 'user-full-auth', 'namespace' => 'FireflyIII\Http\Controllers\Webhooks', 'prefix' => 'webhooks', 'as' => 'webhooks.'],

@@ -91,6 +91,12 @@
                     <span>{{ 'recurrences'|_ }}</span>
                 </a>
             </li>
+            <li class="{{ activeRoutePartial('bill-inbox') }}">
+                <a href="{{ route('bill-inbox.index') }}">
+                    <span class="fa fa-angle-right fa-fw"></span>
+                    <span>账单收件箱</span>
+                </a>
+            </li>
             {% if true == featuringWebhooks %}
                 <li class="{{ activeRoutePartial('webhooks') }}">
                     <a href="{{ route('webhooks.index') }}">

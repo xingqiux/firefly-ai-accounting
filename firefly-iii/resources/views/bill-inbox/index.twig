@@ -1,0 +1,109 @@
+{% extends './layout/default' %}
+
+{% block breadcrumbs %}
+    {{ Breadcrumbs.render(Route.getCurrentRoute.getName) }}
+{% endblock %}
+
+{% block content %}
+    <div class="row">
+        <div class="col-lg-12 col-sm-12 col-md-12">
+            <div class="box">
+                <div class="box-header with-border">
+                    <h3 class="box-title">账单收件箱</h3>
+                    <div class="box-tools pull-right">
+                        <a class="btn btn-box-tool" href="{{ route('bill-inbox.settings') }}">
+                            <span class="fa fa-cog fa-fw"></span> 邮箱配置
+                        </a>
+                    </div>
+                </div>
+                <div class="box-body">
+                    <p class="text-muted">
+                        这里显示专用账单邮箱同步后生成的任务。任务状态、附件、事件日志和验证码/密码挑战都保存在 Firefly III 后端。
+                    </p>
+                    <div class="btn-group" role="group">
+                        <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
+                        {% for status, total in stats %}
+                            <a class="btn btn-default {% if currentStatus == status %}active{% endif %}" href="{{ route('bill-inbox.index', {status: status}) }}">
+                                {{ status }} <span class="badge">{{ total }}</span>
+                            </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="box-body no-padding">
+                    {% if tasks.count() == 0 %}
+                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱并运行同步后，收到的账单会显示在这里。</p>
+                    {% else %}
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped">
+                                <thead>
+                                <tr>
+                                    <th style="width: 80px;">ID</th>
+                                    <th>状态</th>
+                                    <th>来源</th>
+                                    <th>邮件/摘要</th>
+                                    <th>收到时间</th>
+                                    <th>下一步</th>
+                                    <th style="width: 100px;">操作</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {% for task in tasks %}
+                                    <tr>
+                                        <td>#{{ task.id }}</td>
+                                        <td>
+                                            {% if task.status == 'needs_secret' %}
+                                                <span class="label label-warning">{{ task.status }}</span>
+                                            {% elseif task.status == 'failed' or task.status == 'unknown' %}
+                                                <span class="label label-danger">{{ task.status }}</span>
+                                            {% elseif task.status == 'imported' or task.status == 'ready' %}
+                                                <span class="label label-success">{{ task.status }}</span>
+                                            {% elseif task.status == 'ignored' %}
+                                                <span class="label label-default">{{ task.status }}</span>
+                                            {% else %}
+                                                <span class="label label-info">{{ task.status }}</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ task.source }}{% if task.profile_id %}<br><small class="text-muted">{{ task.profile_id }}</small>{% endif %}</td>
+                                        <td>
+                                            <a href="{{ route('bill-inbox.show', [task.id]) }}">{{ task.summary|default(task.mailMessage.subject|default('无标题账单邮件')) }}</a>
+                                            {% if task.mailMessage %}
+                                                <br><small class="text-muted">{{ task.mailMessage.from_address }} → {{ task.mailMessage.to_address }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if task.received_at %}
+                                                {{ task.received_at.format('Y-m-d H:i') }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if task.currentSecretChallenge %}
+                                                {{ task.currentSecretChallenge.prompt|default('请输入密码或验证码') }}
+                                            {% elseif task.error_message %}
+                                                {{ task.error_message }}
+                                            {% else %}
+                                                查看详情
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.show', [task.id]) }}">
+                                                <span class="fa fa-search fa-fw"></span> 查看
+                                            </a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% endif %}
+                </div>
+                {% if tasks.count() > 0 %}
+                    <div class="box-footer">
+                        {{ tasks.links('pagination.bootstrap-4')|raw }}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+{% endblock %}

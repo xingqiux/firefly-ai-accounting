@@ -27,6 +27,7 @@ use Diglactic\Breadcrumbs\Generator;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\Attachment;
 use FireflyIII\Models\Bill;
+use FireflyIII\Models\BillTask;
 use FireflyIII\Models\Budget;
 use FireflyIII\Models\BudgetLimit;
 use FireflyIII\Models\Category;
@@ -1348,6 +1349,31 @@ Breadcrumbs::for(
     static function (Generator $breadcrumbs, Webhook $webhook): void {
         $breadcrumbs->parent('webhooks.show', $webhook);
         $breadcrumbs->push(trans('firefly.edit_webhook', ['title' => limitStringLength($webhook->title)]), route('webhooks.edit', [$webhook->id]));
+    }
+);
+
+// bill inbox
+Breadcrumbs::for(
+    'bill-inbox.index',
+    static function (Generator $breadcrumbs): void {
+        $breadcrumbs->parent('index');
+        $breadcrumbs->push('账单收件箱', route('bill-inbox.index'));
+    }
+);
+
+Breadcrumbs::for(
+    'bill-inbox.settings',
+    static function (Generator $breadcrumbs): void {
+        $breadcrumbs->parent('bill-inbox.index');
+        $breadcrumbs->push('邮箱配置', route('bill-inbox.settings'));
+    }
+);
+
+Breadcrumbs::for(
+    'bill-inbox.show',
+    static function (Generator $breadcrumbs, BillTask $billTask): void {
+        $breadcrumbs->parent('bill-inbox.index');
+        $breadcrumbs->push(sprintf('任务 #%d', $billTask->id), route('bill-inbox.show', [$billTask->id]));
     }
 );
 
