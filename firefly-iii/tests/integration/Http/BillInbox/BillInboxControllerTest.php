@@ -91,9 +91,42 @@ final class BillInboxControllerTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee('普通邮箱');
+        $response->assertSee('Gmail 地址');
+        $response->assertSee('应用密码');
         $response->assertSee('Gmail');
-        $response->assertSee('处理规则');
+        $response->assertSee('只处理这些邮件');
+        $response->assertSee('高级设置');
+        $response->assertDontSee('来源标识');
+        $response->assertDontSee('附件类型');
         $response->assertDontSee('这个邮箱只用于接收账单邮件');
+    }
+
+    public function testSettingsSaveQuickGmailConfiguration(): void
+    {
+        $response = $this->actingAs($this->user)->post(route('bill-inbox.settings.post'), [
+            'enabled'           => '1',
+            'email'             => 'money@example.com',
+            'password'          => 'gmail-app-password',
+            'quick_gmail_label' => 'Bills',
+            'quick_keywords'    => '账单, statement',
+        ]);
+
+        $response->assertRedirect(route('bill-inbox.settings'));
+        $this->actingAs($this->user);
+
+        $this->assertSame('gmail', Preferences::get('bill_inbox_mailbox_provider')->data);
+        $this->assertSame('money@example.com', Preferences::get('bill_inbox_mailbox_username')->data);
+        $this->assertSame('imap.gmail.com', Preferences::get('bill_inbox_mailbox_host')->data);
+        $this->assertSame(993, Preferences::get('bill_inbox_mailbox_port')->data);
+        $this->assertSame('ssl', Preferences::get('bill_inbox_mailbox_encryption')->data);
+
+        $rules = Preferences::get('bill_inbox_processing_rules')->data;
+        $this->assertCount(1, $rules);
+        $this->assertSame('默认账单邮件', $rules[0]['name']);
+        $this->assertSame('mail-bill', $rules[0]['source']);
+        $this->assertSame('Bills', $rules[0]['gmail_label']);
+        $this->assertSame(['账单', 'statement'], $rules[0]['keywords']);
+        $this->assertTrue($rules[0]['enabled']);
     }
 
     public function testSettingsSaveGmailConfigurationAndProcessingRules(): void

@@ -77,9 +77,9 @@ class IndexController extends Controller
         Log::channel('audit')->info('User visits bill inbox settings page.');
 
         return view('bill-inbox.settings', [
-            'settings'    => $this->mailboxSettings(),
-            'hasPassword' => '' !== (string) Preferences::getEncrypted('bill_inbox_mailbox_password', '')->data,
-            'ruleRows'    => $this->ruleRows(),
+            'settings'      => $this->mailboxSettings(),
+            'hasPassword'   => '' !== (string) Preferences::getEncrypted('bill_inbox_mailbox_password', '')->data,
+            'quickSettings' => $this->quickSettings(),
         ]);
     }
 
@@ -127,6 +127,8 @@ class IndexController extends Controller
             'username'          => ['nullable', 'string', 'max:255'],
             'password'          => ['nullable', 'string', 'max:1024'],
             'folder'            => ['nullable', 'string', 'max:255'],
+            'quick_gmail_label' => ['nullable', 'string', 'max:255'],
+            'quick_keywords'    => ['nullable', 'string', 'max:255'],
             'rule_enabled'      => ['nullable', 'array'],
             'rule_enabled.*'    => ['nullable', 'boolean'],
             'rule_name'         => ['nullable', 'array'],
@@ -170,6 +172,8 @@ class IndexController extends Controller
         Preferences::set('bill_inbox_mailbox_username', $username);
         Preferences::set('bill_inbox_mailbox_folder', $folder);
         Preferences::set('bill_inbox_processing_rules', $this->processingRulesFromValidated($validated));
+        Preferences::set('bill_inbox_quick_gmail_label', trim((string) ($validated['quick_gmail_label'] ?? '')));
+        Preferences::set('bill_inbox_quick_keywords', trim((string) ($validated['quick_keywords'] ?? '')));
 
         if (array_key_exists('password', $validated) && '' !== (string) $validated['password']) {
             Preferences::setEncrypted('bill_inbox_mailbox_password', (string) $validated['password']);
@@ -195,27 +199,40 @@ class IndexController extends Controller
         ];
     }
 
-    private function ruleRows(): array
+    private function quickSettings(): array
     {
-        $saved = Preferences::get('bill_inbox_processing_rules', [])->data;
-        $rows  = is_array($saved) ? $saved : [];
-
-        for ($i = count($rows); $i < 5; ++$i) {
-            $rows[] = [
-                'enabled'               => false,
-                'name'                  => '',
-                'source'                => '',
-                'from_contains'         => '',
-                'subject_contains'      => '',
-                'attachment_extensions' => [],
-                'gmail_label'           => '',
-            ];
-        }
-
-        return $rows;
+        return [
+            'gmail_label' => (string) Preferences::get('bill_inbox_quick_gmail_label', '')->data,
+            'keywords'    => (string) Preferences::get('bill_inbox_quick_keywords', '账单, statement')->data,
+        ];
     }
 
     private function processingRulesFromValidated(array $validated): array
+    {
+        $rules = $this->tableRulesFromValidated($validated);
+        if ([] !== $rules) {
+            return $rules;
+        }
+
+        $label    = trim((string) ($validated['quick_gmail_label'] ?? ''));
+        $keywords = $this->keywords((string) ($validated['quick_keywords'] ?? ''));
+        if ('' === $label && [] === $keywords) {
+            return [];
+        }
+
+        return [[
+            'enabled'               => true,
+            'name'                  => '默认账单邮件',
+            'source'                => 'mail-bill',
+            'from_contains'         => '',
+            'subject_contains'      => '',
+            'attachment_extensions' => [],
+            'gmail_label'           => $label,
+            'keywords'              => $keywords,
+        ]];
+    }
+
+    private function tableRulesFromValidated(array $validated): array
     {
         $names       = $validated['rule_name'] ?? [];
         $sources     = $validated['rule_source'] ?? [];
@@ -260,6 +277,24 @@ class IndexController extends Controller
         }
 
         return $rules;
+    }
+
+    private function keywords(string $value): array
+    {
+        if ('' === trim($value)) {
+            return [];
+        }
+
+        $parts    = preg_split('/[,，\n\r]+/', $value) ?: [];
+        $keywords = [];
+        foreach ($parts as $part) {
+            $keyword = trim((string) $part);
+            if ('' !== $keyword && !in_array($keyword, $keywords, true)) {
+                $keywords[] = $keyword;
+            }
+        }
+
+        return $keywords;
     }
 
     private function attachmentExtensions(string $value): array

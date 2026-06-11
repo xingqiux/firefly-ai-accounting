@@ -32,8 +32,7 @@
                         {% endif %}
 
                         <p class="text-muted">
-                            可以接管一个普通邮箱账号。账单收件箱只会处理命中下方处理规则的邮件，其他邮件会被同步流程忽略。
-                            目前优先支持 Gmail，也可以保留普通 IMAP 参数用于后续扩展。
+                            可以接管一个普通邮箱账号。默认按 Gmail 配好连接，只处理你指定的账单邮件，其他邮件会被同步流程忽略。
                         </p>
 
                         <div class="form-group">
@@ -46,120 +45,99 @@
                             </div>
                         </div>
 
-                        <div class="form-group">
-                            <label for="bill-inbox-provider" class="col-sm-3 control-label">邮箱类型</label>
-                            <div class="col-sm-9">
-                                <select id="bill-inbox-provider" class="form-control" name="provider">
-                                    <option value="gmail" {% if settings.provider == 'gmail' %}selected{% endif %}>Gmail</option>
-                                    <option value="imap" {% if settings.provider == 'imap' %}selected{% endif %}>普通 IMAP</option>
-                                </select>
-                                <p class="help-block">Gmail 会使用 imap.gmail.com、993、SSL；密码建议填写 Gmail 应用密码。</p>
-                            </div>
-                        </div>
+                        <input type="hidden" name="provider" value="{{ settings.provider|default('gmail') }}">
 
                         <div class="form-group">
-                            <label for="bill-inbox-email" class="col-sm-3 control-label">邮箱地址</label>
+                            <label for="bill-inbox-email" class="col-sm-3 control-label">Gmail 地址</label>
                             <div class="col-sm-9">
                                 <input id="bill-inbox-email" class="form-control" type="email" name="email" value="{{ settings.email }}" placeholder="your-name@gmail.com">
                             </div>
                         </div>
 
                         <div class="form-group">
-                            <label for="bill-inbox-host" class="col-sm-3 control-label">IMAP 主机</label>
+                            <label for="bill-inbox-password" class="col-sm-3 control-label">应用密码</label>
                             <div class="col-sm-9">
-                                <input id="bill-inbox-host" class="form-control" type="text" name="host" value="{{ settings.host }}" placeholder="imap.gmail.com">
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="bill-inbox-port" class="col-sm-3 control-label">端口</label>
-                            <div class="col-sm-3">
-                                <input id="bill-inbox-port" class="form-control" type="number" min="1" max="65535" name="port" value="{{ settings.port }}">
-                            </div>
-                            <label for="bill-inbox-encryption" class="col-sm-2 control-label">加密</label>
-                            <div class="col-sm-4">
-                                <select id="bill-inbox-encryption" class="form-control" name="encryption">
-                                    <option value="ssl" {% if settings.encryption == 'ssl' %}selected{% endif %}>SSL</option>
-                                    <option value="tls" {% if settings.encryption == 'tls' %}selected{% endif %}>TLS</option>
-                                    <option value="starttls" {% if settings.encryption == 'starttls' %}selected{% endif %}>STARTTLS</option>
-                                    <option value="none" {% if settings.encryption == 'none' %}selected{% endif %}>无</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="bill-inbox-username" class="col-sm-3 control-label">用户名</label>
-                            <div class="col-sm-9">
-                                <input id="bill-inbox-username" class="form-control" type="text" name="username" value="{{ settings.username }}" autocomplete="username">
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="bill-inbox-password" class="col-sm-3 control-label">密码/应用密码</label>
-                            <div class="col-sm-9">
-                                <input id="bill-inbox-password" class="form-control" type="password" name="password" autocomplete="new-password" placeholder="{% if hasPassword %}已保存，留空则不修改{% else %}输入邮箱应用密码{% endif %}">
+                                <input id="bill-inbox-password" class="form-control" type="password" name="password" autocomplete="new-password" placeholder="{% if hasPassword %}已保存，留空则不修改{% else %}输入 Gmail 应用密码{% endif %}">
                                 {% if hasPassword %}
                                     <p class="help-block">已保存一个加密密码；留空会继续使用原密码。</p>
+                                {% else %}
+                                    <p class="help-block">建议使用 Gmail 应用密码，不需要在这里填写 Google 登录密码。</p>
                                 {% endif %}
                             </div>
                         </div>
 
                         <div class="form-group">
-                            <label for="bill-inbox-folder" class="col-sm-3 control-label">同步文件夹</label>
+                            <label for="quick-gmail-label" class="col-sm-3 control-label">只处理这些邮件</label>
                             <div class="col-sm-9">
-                                <input id="bill-inbox-folder" class="form-control" type="text" name="folder" value="{{ settings.folder }}" placeholder="INBOX">
+                                <input id="quick-gmail-label" class="form-control" type="text" name="quick_gmail_label" value="{{ quickSettings.gmail_label }}" placeholder="Gmail 标签，例如 Bills">
+                                <p class="help-block">推荐在 Gmail 里先给账单邮件打一个标签。留空时会用下面的关键词匹配。</p>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="quick-keywords" class="col-sm-3 control-label">关键词</label>
+                            <div class="col-sm-9">
+                                <input id="quick-keywords" class="form-control" type="text" name="quick_keywords" value="{{ quickSettings.keywords }}" placeholder="账单, statement, 支付宝">
+                                <p class="help-block">用逗号分隔，匹配主题或邮件正文。默认值通常已经够用。</p>
                             </div>
                         </div>
 
                         <hr>
 
-                        <h4>处理规则</h4>
-                        <p class="text-muted">
-                            同步 worker 会先拉取邮件元信息，再按规则匹配。至少命中一个启用规则，才会归档原始邮件、提取附件并创建账单任务。
-                        </p>
+                        <div class="panel panel-default">
+                            <div class="panel-heading">
+                                <a data-toggle="collapse" href="#bill-inbox-advanced" aria-expanded="false">高级设置</a>
+                            </div>
+                            <div id="bill-inbox-advanced" class="panel-collapse collapse">
+                                <div class="panel-body">
+                                    <div class="form-group">
+                                        <label for="bill-inbox-provider" class="col-sm-3 control-label">邮箱类型</label>
+                                        <div class="col-sm-9">
+                                            <select id="bill-inbox-provider" class="form-control" name="provider">
+                                                <option value="gmail" {% if settings.provider == 'gmail' %}selected{% endif %}>Gmail</option>
+                                                <option value="imap" {% if settings.provider == 'imap' %}selected{% endif %}>普通 IMAP</option>
+                                            </select>
+                                        </div>
+                                    </div>
 
-                        <div class="table-responsive">
-                            <table class="table table-condensed table-striped">
-                                <thead>
-                                <tr>
-                                    <th style="width: 70px;">启用</th>
-                                    <th style="min-width: 130px;">规则名</th>
-                                    <th style="min-width: 140px;">来源标识</th>
-                                    <th style="min-width: 170px;">发件人包含</th>
-                                    <th style="min-width: 170px;">主题包含</th>
-                                    <th style="min-width: 130px;">附件类型</th>
-                                    <th style="min-width: 140px;">Gmail Label</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-                                {% for row in ruleRows %}
-                                    {% set extensions = row.attachment_extensions|default([]) %}
-                                    <tr>
-                                        <td>
-                                            <input type="checkbox" name="rule_enabled[{{ loop.index0 }}]" value="1" {% if row.enabled|default(false) %}checked{% endif %}>
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_name[{{ loop.index0 }}]" value="{{ row.name|default('') }}" placeholder="招商信用卡">
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_source[{{ loop.index0 }}]" value="{{ row.source|default('') }}" placeholder="cmb-credit-card">
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_from[{{ loop.index0 }}]" value="{{ row.from_contains|default('') }}" placeholder="cmbchina.com">
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_subject[{{ loop.index0 }}]" value="{{ row.subject_contains|default('') }}" placeholder="电子账单">
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_attachment[{{ loop.index0 }}]" value="{{ extensions is iterable ? extensions|join(', ') : extensions }}" placeholder="zip,pdf,xlsx">
-                                        </td>
-                                        <td>
-                                            <input class="form-control input-sm" type="text" name="rule_gmail_label[{{ loop.index0 }}]" value="{{ row.gmail_label|default('') }}" placeholder="Bank Bills">
-                                        </td>
-                                    </tr>
-                                {% endfor %}
-                                </tbody>
-                            </table>
+                                    <div class="form-group">
+                                        <label for="bill-inbox-host" class="col-sm-3 control-label">IMAP 主机</label>
+                                        <div class="col-sm-9">
+                                            <input id="bill-inbox-host" class="form-control" type="text" name="host" value="{{ settings.host }}" placeholder="imap.gmail.com">
+                                        </div>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="bill-inbox-port" class="col-sm-3 control-label">端口</label>
+                                        <div class="col-sm-3">
+                                            <input id="bill-inbox-port" class="form-control" type="number" min="1" max="65535" name="port" value="{{ settings.port }}">
+                                        </div>
+                                        <label for="bill-inbox-encryption" class="col-sm-2 control-label">加密</label>
+                                        <div class="col-sm-4">
+                                            <select id="bill-inbox-encryption" class="form-control" name="encryption">
+                                                <option value="ssl" {% if settings.encryption == 'ssl' %}selected{% endif %}>SSL</option>
+                                                <option value="tls" {% if settings.encryption == 'tls' %}selected{% endif %}>TLS</option>
+                                                <option value="starttls" {% if settings.encryption == 'starttls' %}selected{% endif %}>STARTTLS</option>
+                                                <option value="none" {% if settings.encryption == 'none' %}selected{% endif %}>无</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="bill-inbox-username" class="col-sm-3 control-label">用户名</label>
+                                        <div class="col-sm-9">
+                                            <input id="bill-inbox-username" class="form-control" type="text" name="username" value="{{ settings.username }}" autocomplete="username">
+                                        </div>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label for="bill-inbox-folder" class="col-sm-3 control-label">同步文件夹</label>
+                                        <div class="col-sm-9">
+                                            <input id="bill-inbox-folder" class="form-control" type="text" name="folder" value="{{ settings.folder }}" placeholder="INBOX">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="box-footer">
