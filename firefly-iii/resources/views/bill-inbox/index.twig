@@ -18,7 +18,7 @@
                 </div>
                 <div class="box-body">
                     <p class="text-muted">
-                        这里显示专用账单邮箱同步后生成的任务。任务状态、附件、事件日志和验证码/密码挑战都保存在 Firefly III 后端。
+                        这里显示普通邮箱中命中处理规则后生成的账单任务。任务状态、附件、事件日志和验证码/密码挑战都保存在 Firefly III 后端。
                     </p>
                     <div class="btn-group" role="group">
                         <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
@@ -31,7 +31,7 @@
                 </div>
                 <div class="box-body no-padding">
                     {% if tasks.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱并运行同步后，收到的账单会显示在这里。</p>
+                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱和处理规则后，命中的账单邮件会显示在这里。</p>
                     {% else %}
                         <div class="table-responsive">
                             <table class="table table-hover table-striped">

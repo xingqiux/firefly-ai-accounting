@@ -68,6 +68,7 @@ final class BillInboxControllerTest extends TestCase
     {
         $response = $this->actingAs($this->user)->post(route('bill-inbox.settings.post'), [
             'enabled'    => '1',
+            'provider'   => 'imap',
             'email'      => 'bills@example.com',
             'host'       => 'imap.example.com',
             'port'       => '993',
@@ -82,6 +83,58 @@ final class BillInboxControllerTest extends TestCase
         $this->assertTrue(Preferences::get('bill_inbox_mailbox_enabled')->data);
         $this->assertSame('bills@example.com', Preferences::get('bill_inbox_mailbox_email')->data);
         $this->assertSame('app-password', Preferences::getEncrypted('bill_inbox_mailbox_password')->data);
+    }
+
+    public function testSettingsPageExplainsOrdinaryMailboxRules(): void
+    {
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.settings'));
+
+        $response->assertStatus(200);
+        $response->assertSee('普通邮箱');
+        $response->assertSee('Gmail');
+        $response->assertSee('处理规则');
+        $response->assertDontSee('这个邮箱只用于接收账单邮件');
+    }
+
+    public function testSettingsSaveGmailConfigurationAndProcessingRules(): void
+    {
+        $response = $this->actingAs($this->user)->post(route('bill-inbox.settings.post'), [
+            'enabled'         => '1',
+            'provider'        => 'gmail',
+            'email'           => 'money@example.com',
+            'host'            => '',
+            'port'            => '',
+            'encryption'      => '',
+            'username'        => 'money@example.com',
+            'password'        => 'gmail-app-password',
+            'folder'          => '',
+            'rule_enabled'    => ['1', '1'],
+            'rule_name'       => ['招商信用卡', ''],
+            'rule_source'     => ['cmb-credit-card', ''],
+            'rule_from'       => ['cmbchina.com', ''],
+            'rule_subject'    => ['电子账单', ''],
+            'rule_attachment' => ['zip,pdf', ''],
+            'rule_gmail_label' => ['Bank Bills', ''],
+        ]);
+
+        $response->assertRedirect(route('bill-inbox.settings'));
+        $this->actingAs($this->user);
+
+        $this->assertSame('gmail', Preferences::get('bill_inbox_mailbox_provider')->data);
+        $this->assertSame('imap.gmail.com', Preferences::get('bill_inbox_mailbox_host')->data);
+        $this->assertSame(993, Preferences::get('bill_inbox_mailbox_port')->data);
+        $this->assertSame('ssl', Preferences::get('bill_inbox_mailbox_encryption')->data);
+        $this->assertSame('INBOX', Preferences::get('bill_inbox_mailbox_folder')->data);
+
+        $rules = Preferences::get('bill_inbox_processing_rules')->data;
+        $this->assertCount(1, $rules);
+        $this->assertSame('招商信用卡', $rules[0]['name']);
+        $this->assertSame('cmb-credit-card', $rules[0]['source']);
+        $this->assertSame('cmbchina.com', $rules[0]['from_contains']);
+        $this->assertSame('电子账单', $rules[0]['subject_contains']);
+        $this->assertSame(['zip', 'pdf'], $rules[0]['attachment_extensions']);
+        $this->assertSame('Bank Bills', $rules[0]['gmail_label']);
+        $this->assertTrue($rules[0]['enabled']);
     }
 
     #[Override]

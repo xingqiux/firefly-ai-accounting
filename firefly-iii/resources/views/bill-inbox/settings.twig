@@ -32,7 +32,8 @@
                         {% endif %}
 
                         <p class="text-muted">
-                            这个邮箱只用于接收账单邮件。后续同步 worker 会读取这里的配置，拉取邮件、归档附件并创建账单任务。
+                            可以接管一个普通邮箱账号。账单收件箱只会处理命中下方处理规则的邮件，其他邮件会被同步流程忽略。
+                            目前优先支持 Gmail，也可以保留普通 IMAP 参数用于后续扩展。
                         </p>
 
                         <div class="form-group">
@@ -46,9 +47,20 @@
                         </div>
 
                         <div class="form-group">
+                            <label for="bill-inbox-provider" class="col-sm-3 control-label">邮箱类型</label>
+                            <div class="col-sm-9">
+                                <select id="bill-inbox-provider" class="form-control" name="provider">
+                                    <option value="gmail" {% if settings.provider == 'gmail' %}selected{% endif %}>Gmail</option>
+                                    <option value="imap" {% if settings.provider == 'imap' %}selected{% endif %}>普通 IMAP</option>
+                                </select>
+                                <p class="help-block">Gmail 会使用 imap.gmail.com、993、SSL；密码建议填写 Gmail 应用密码。</p>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
                             <label for="bill-inbox-email" class="col-sm-3 control-label">邮箱地址</label>
                             <div class="col-sm-9">
-                                <input id="bill-inbox-email" class="form-control" type="email" name="email" value="{{ settings.email }}" placeholder="bills@example.com">
+                                <input id="bill-inbox-email" class="form-control" type="email" name="email" value="{{ settings.email }}" placeholder="your-name@gmail.com">
                             </div>
                         </div>
 
@@ -97,6 +109,57 @@
                             <div class="col-sm-9">
                                 <input id="bill-inbox-folder" class="form-control" type="text" name="folder" value="{{ settings.folder }}" placeholder="INBOX">
                             </div>
+                        </div>
+
+                        <hr>
+
+                        <h4>处理规则</h4>
+                        <p class="text-muted">
+                            同步 worker 会先拉取邮件元信息，再按规则匹配。至少命中一个启用规则，才会归档原始邮件、提取附件并创建账单任务。
+                        </p>
+
+                        <div class="table-responsive">
+                            <table class="table table-condensed table-striped">
+                                <thead>
+                                <tr>
+                                    <th style="width: 70px;">启用</th>
+                                    <th style="min-width: 130px;">规则名</th>
+                                    <th style="min-width: 140px;">来源标识</th>
+                                    <th style="min-width: 170px;">发件人包含</th>
+                                    <th style="min-width: 170px;">主题包含</th>
+                                    <th style="min-width: 130px;">附件类型</th>
+                                    <th style="min-width: 140px;">Gmail Label</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {% for row in ruleRows %}
+                                    {% set extensions = row.attachment_extensions|default([]) %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" name="rule_enabled[{{ loop.index0 }}]" value="1" {% if row.enabled|default(false) %}checked{% endif %}>
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_name[{{ loop.index0 }}]" value="{{ row.name|default('') }}" placeholder="招商信用卡">
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_source[{{ loop.index0 }}]" value="{{ row.source|default('') }}" placeholder="cmb-credit-card">
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_from[{{ loop.index0 }}]" value="{{ row.from_contains|default('') }}" placeholder="cmbchina.com">
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_subject[{{ loop.index0 }}]" value="{{ row.subject_contains|default('') }}" placeholder="电子账单">
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_attachment[{{ loop.index0 }}]" value="{{ extensions is iterable ? extensions|join(', ') : extensions }}" placeholder="zip,pdf,xlsx">
+                                        </td>
+                                        <td>
+                                            <input class="form-control input-sm" type="text" name="rule_gmail_label[{{ loop.index0 }}]" value="{{ row.gmail_label|default('') }}" placeholder="Bank Bills">
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                     <div class="box-footer">

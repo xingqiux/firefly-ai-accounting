@@ -79,6 +79,7 @@ class IndexController extends Controller
         return view('bill-inbox.settings', [
             'settings'    => $this->mailboxSettings(),
             'hasPassword' => '' !== (string) Preferences::getEncrypted('bill_inbox_mailbox_password', '')->data,
+            'ruleRows'    => $this->ruleRows(),
         ]);
     }
 
@@ -117,23 +118,58 @@ class IndexController extends Controller
     public function postSettings(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'enabled'    => ['nullable', 'boolean'],
-            'email'      => ['nullable', 'string', 'max:255'],
-            'host'       => ['nullable', 'string', 'max:255'],
-            'port'       => ['nullable', 'integer', 'min:1', 'max:65535'],
-            'encryption' => ['nullable', 'string', 'in:none,ssl,tls,starttls'],
-            'username'   => ['nullable', 'string', 'max:255'],
-            'password'   => ['nullable', 'string', 'max:1024'],
-            'folder'     => ['nullable', 'string', 'max:255'],
+            'enabled'           => ['nullable', 'boolean'],
+            'provider'          => ['nullable', 'string', 'in:gmail,imap'],
+            'email'             => ['nullable', 'string', 'max:255'],
+            'host'              => ['nullable', 'string', 'max:255'],
+            'port'              => ['nullable', 'integer', 'min:1', 'max:65535'],
+            'encryption'        => ['nullable', 'string', 'in:none,ssl,tls,starttls'],
+            'username'          => ['nullable', 'string', 'max:255'],
+            'password'          => ['nullable', 'string', 'max:1024'],
+            'folder'            => ['nullable', 'string', 'max:255'],
+            'rule_enabled'      => ['nullable', 'array'],
+            'rule_enabled.*'    => ['nullable', 'boolean'],
+            'rule_name'         => ['nullable', 'array'],
+            'rule_name.*'       => ['nullable', 'string', 'max:120'],
+            'rule_source'       => ['nullable', 'array'],
+            'rule_source.*'     => ['nullable', 'string', 'max:120'],
+            'rule_from'         => ['nullable', 'array'],
+            'rule_from.*'       => ['nullable', 'string', 'max:255'],
+            'rule_subject'      => ['nullable', 'array'],
+            'rule_subject.*'    => ['nullable', 'string', 'max:255'],
+            'rule_attachment'   => ['nullable', 'array'],
+            'rule_attachment.*' => ['nullable', 'string', 'max:255'],
+            'rule_gmail_label'  => ['nullable', 'array'],
+            'rule_gmail_label.*' => ['nullable', 'string', 'max:255'],
         ]);
 
+        $provider   = (string) ($validated['provider'] ?? 'gmail');
+        $email      = (string) ($validated['email'] ?? '');
+        $host       = trim((string) ($validated['host'] ?? ''));
+        $port       = (int) ($validated['port'] ?? 993);
+        $encryption = (string) ($validated['encryption'] ?? 'ssl');
+        $folder     = trim((string) ($validated['folder'] ?? ''));
+        $username   = trim((string) ($validated['username'] ?? ''));
+
+        if ('gmail' === $provider) {
+            $host       = 'imap.gmail.com';
+            $port       = 993;
+            $encryption = 'ssl';
+            $folder     = '' === $folder ? 'INBOX' : $folder;
+            $username   = '' === $username ? $email : $username;
+        }
+
+        $folder     = '' === $folder ? 'INBOX' : $folder;
+
         Preferences::set('bill_inbox_mailbox_enabled', $request->boolean('enabled'));
-        Preferences::set('bill_inbox_mailbox_email', (string) ($validated['email'] ?? ''));
-        Preferences::set('bill_inbox_mailbox_host', (string) ($validated['host'] ?? ''));
-        Preferences::set('bill_inbox_mailbox_port', (int) ($validated['port'] ?? 993));
-        Preferences::set('bill_inbox_mailbox_encryption', (string) ($validated['encryption'] ?? 'ssl'));
-        Preferences::set('bill_inbox_mailbox_username', (string) ($validated['username'] ?? ''));
-        Preferences::set('bill_inbox_mailbox_folder', (string) ($validated['folder'] ?? 'INBOX'));
+        Preferences::set('bill_inbox_mailbox_provider', $provider);
+        Preferences::set('bill_inbox_mailbox_email', $email);
+        Preferences::set('bill_inbox_mailbox_host', $host);
+        Preferences::set('bill_inbox_mailbox_port', $port);
+        Preferences::set('bill_inbox_mailbox_encryption', $encryption);
+        Preferences::set('bill_inbox_mailbox_username', $username);
+        Preferences::set('bill_inbox_mailbox_folder', $folder);
+        Preferences::set('bill_inbox_processing_rules', $this->processingRulesFromValidated($validated));
 
         if (array_key_exists('password', $validated) && '' !== (string) $validated['password']) {
             Preferences::setEncrypted('bill_inbox_mailbox_password', (string) $validated['password']);
@@ -149,12 +185,98 @@ class IndexController extends Controller
     {
         return [
             'enabled'    => true === Preferences::get('bill_inbox_mailbox_enabled', false)->data,
+            'provider'   => (string) Preferences::get('bill_inbox_mailbox_provider', 'gmail')->data,
             'email'      => (string) Preferences::get('bill_inbox_mailbox_email', '')->data,
-            'host'       => (string) Preferences::get('bill_inbox_mailbox_host', '')->data,
+            'host'       => (string) Preferences::get('bill_inbox_mailbox_host', 'imap.gmail.com')->data,
             'port'       => (int) Preferences::get('bill_inbox_mailbox_port', 993)->data,
             'encryption' => (string) Preferences::get('bill_inbox_mailbox_encryption', 'ssl')->data,
             'username'   => (string) Preferences::get('bill_inbox_mailbox_username', '')->data,
             'folder'     => (string) Preferences::get('bill_inbox_mailbox_folder', 'INBOX')->data,
         ];
+    }
+
+    private function ruleRows(): array
+    {
+        $saved = Preferences::get('bill_inbox_processing_rules', [])->data;
+        $rows  = is_array($saved) ? $saved : [];
+
+        for ($i = count($rows); $i < 5; ++$i) {
+            $rows[] = [
+                'enabled'               => false,
+                'name'                  => '',
+                'source'                => '',
+                'from_contains'         => '',
+                'subject_contains'      => '',
+                'attachment_extensions' => [],
+                'gmail_label'           => '',
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function processingRulesFromValidated(array $validated): array
+    {
+        $names       = $validated['rule_name'] ?? [];
+        $sources     = $validated['rule_source'] ?? [];
+        $from        = $validated['rule_from'] ?? [];
+        $subjects    = $validated['rule_subject'] ?? [];
+        $attachments = $validated['rule_attachment'] ?? [];
+        $labels      = $validated['rule_gmail_label'] ?? [];
+        $enabled     = $validated['rule_enabled'] ?? [];
+        $keys        = array_unique(array_merge(
+            array_keys($names),
+            array_keys($sources),
+            array_keys($from),
+            array_keys($subjects),
+            array_keys($attachments),
+            array_keys($labels),
+            array_keys($enabled)
+        ));
+        sort($keys);
+
+        $rules       = [];
+        foreach ($keys as $key) {
+            $name       = trim((string) ($names[$key] ?? ''));
+            $source     = trim((string) ($sources[$key] ?? ''));
+            $fromText   = trim((string) ($from[$key] ?? ''));
+            $subject    = trim((string) ($subjects[$key] ?? ''));
+            $attachment = trim((string) ($attachments[$key] ?? ''));
+            $label      = trim((string) ($labels[$key] ?? ''));
+
+            if ('' === $name && '' === $source && '' === $fromText && '' === $subject && '' === $attachment && '' === $label) {
+                continue;
+            }
+
+            $rules[]    = [
+                'enabled'               => filter_var($enabled[$key] ?? false, FILTER_VALIDATE_BOOL),
+                'name'                  => '' === $name ? sprintf('规则 %d', count($rules) + 1) : $name,
+                'source'                => '' === $source ? 'unknown' : $source,
+                'from_contains'         => $fromText,
+                'subject_contains'      => $subject,
+                'attachment_extensions' => $this->attachmentExtensions($attachment),
+                'gmail_label'           => $label,
+            ];
+        }
+
+        return $rules;
+    }
+
+    private function attachmentExtensions(string $value): array
+    {
+        if ('' === $value) {
+            return [];
+        }
+
+        $parts      = preg_split('/[,，\s]+/', $value) ?: [];
+        $extensions = [];
+        foreach ($parts as $part) {
+            $extension = strtolower(trim((string) $part, " \t\n\r\0\x0B."));
+            if ('' !== $extension && !in_array($extension, $extensions, true)) {
+                $extensions[] = $extension;
+            }
+        }
+
+        return $extensions;
     }
 }
