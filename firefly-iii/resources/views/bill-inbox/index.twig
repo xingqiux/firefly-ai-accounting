@@ -20,6 +20,45 @@
                     <p class="text-muted">
                         这里显示普通邮箱中命中处理规则后生成的账单任务。任务状态、附件、事件日志和验证码/密码挑战都保存在 Firefly III 后端。
                     </p>
+                    <div class="well well-sm" style="margin-bottom: 15px;">
+                        <strong>邮箱配置状态</strong>
+                        {% if mailboxStatus.enabled %}
+                            <span class="label label-success">已启用</span>
+                        {% else %}
+                            <span class="label label-warning">未启用</span>
+                        {% endif %}
+                        <div class="row" style="margin-top: 10px;">
+                            <div class="col-sm-3">
+                                <small class="text-muted">邮箱</small><br>
+                                {{ mailboxStatus.email|default('未配置') }}
+                            </div>
+                            <div class="col-sm-3">
+                                <small class="text-muted">处理范围</small><br>
+                                {% if mailboxStatus.gmail_label %}
+                                    {{ mailboxStatus.gmail_label }}
+                                {% else %}
+                                    未设置标签
+                                {% endif %}
+                            </div>
+                            <div class="col-sm-3">
+                                <small class="text-muted">关键词</small><br>
+                                {{ mailboxStatus.keywords|default('未设置') }}
+                            </div>
+                            <div class="col-sm-3">
+                                <small class="text-muted">凭据</small><br>
+                                {% if mailboxStatus.hasPassword %}
+                                    应用密码已保存
+                                {% else %}
+                                    未保存应用密码
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% if not mailboxStatus.enabled %}
+                            <p class="text-warning" style="margin: 10px 0 0;">
+                                邮箱配置已保存，但同步开关未启用。进入邮箱配置页勾选“启用账单邮箱同步”后，后续同步 worker 才会处理邮件。
+                            </p>
+                        {% endif %}
+                    </div>
                     <div class="btn-group" role="group">
                         <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
                         {% for status, total in stats %}

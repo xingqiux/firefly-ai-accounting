@@ -39,6 +39,28 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('needs_secret');
     }
 
+    public function testIndexShowsMailboxConfigurationStatus(): void
+    {
+        $this->actingAs($this->user);
+
+        Preferences::set('bill_inbox_mailbox_enabled', false);
+        Preferences::set('bill_inbox_mailbox_provider', 'gmail');
+        Preferences::set('bill_inbox_mailbox_email', 'money@example.com');
+        Preferences::setEncrypted('bill_inbox_mailbox_password', 'gmail-app-password');
+        Preferences::set('bill_inbox_quick_gmail_label', 'buii');
+        Preferences::set('bill_inbox_quick_keywords', '账单, statement');
+
+        $response = $this->get(route('bill-inbox.index'));
+
+        $response->assertStatus(200);
+        $response->assertSee('邮箱配置状态');
+        $response->assertSee('未启用');
+        $response->assertSee('money@example.com');
+        $response->assertSee('buii');
+        $response->assertSee('账单, statement');
+        $response->assertSee('应用密码已保存');
+    }
+
     public function testShowDisplaysTaskDetailAndSecretForm(): void
     {
         $response = $this->actingAs($this->user)->get(route('bill-inbox.show', [$this->task->id]));

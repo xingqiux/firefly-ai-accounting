@@ -58,6 +58,7 @@ class IndexController extends Controller
             'tasks'         => $tasks,
             'stats'         => $stats,
             'currentStatus' => $status,
+            'mailboxStatus' => $this->mailboxStatus(),
         ]);
     }
 
@@ -204,6 +205,20 @@ class IndexController extends Controller
         return [
             'gmail_label' => (string) Preferences::get('bill_inbox_quick_gmail_label', '')->data,
             'keywords'    => (string) Preferences::get('bill_inbox_quick_keywords', '账单, statement')->data,
+        ];
+    }
+
+    private function mailboxStatus(): array
+    {
+        $settings = $this->mailboxSettings();
+
+        return [
+            'enabled'     => $settings['enabled'],
+            'provider'    => $settings['provider'],
+            'email'       => $settings['email'],
+            'gmail_label' => (string) Preferences::get('bill_inbox_quick_gmail_label', '')->data,
+            'keywords'    => (string) Preferences::get('bill_inbox_quick_keywords', '')->data,
+            'hasPassword' => '' !== (string) Preferences::getEncrypted('bill_inbox_mailbox_password', '')->data,
         ];
     }
 
