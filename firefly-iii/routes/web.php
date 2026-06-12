@@ -1392,6 +1392,7 @@ Route::group(
     ['middleware' => 'user-full-auth', 'namespace' => 'FireflyIII\Http\Controllers\BillInbox', 'prefix' => 'bill-inbox', 'as' => 'bill-inbox.'],
     static function (): void {
         Route::get('', ['uses' => 'IndexController@index', 'as' => 'index']);
+        Route::post('sync', ['uses' => 'IndexController@postSync', 'as' => 'sync']);
         Route::get('settings', ['uses' => 'IndexController@settings', 'as' => 'settings']);
         Route::post('settings', ['uses' => 'IndexController@postSettings', 'as' => 'settings.post']);
         Route::get('{billTask}', ['uses' => 'IndexController@show', 'as' => 'show']);

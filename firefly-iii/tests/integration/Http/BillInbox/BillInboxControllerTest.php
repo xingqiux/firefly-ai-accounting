@@ -12,8 +12,11 @@ use FireflyIII\Models\BillMailMessage;
 use FireflyIII\Models\BillSecretChallenge;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Models\BillTaskEvent;
+use FireflyIII\Services\BillIngestion\BillMailboxConfig;
+use FireflyIII\Services\BillIngestion\ImapBillMailboxClient;
 use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
+use Illuminate\Support\Facades\Storage;
 use Override;
 use PragmaRX\Google2FALaravel\Middleware as MFAMiddleware;
 use Tests\integration\TestCase;
@@ -22,7 +25,9 @@ use Tests\integration\TestCase;
  * @internal
  *
  * @covers \FireflyIII\Http\Controllers\BillInbox\IndexController
+ * @covers \FireflyIII\Services\BillIngestion\BillMailboxSyncService
  * @covers \FireflyIII\Services\BillIngestion\BillTaskActionService
+ * @covers \FireflyIII\Services\BillIngestion\BillTaskProcessor
  */
 final class BillInboxControllerTest extends TestCase
 {
@@ -151,6 +156,27 @@ final class BillInboxControllerTest extends TestCase
         $this->assertTrue($rules[0]['enabled']);
     }
 
+    public function testPostSyncCreatesAlipayTaskAndRequestsPassword(): void
+    {
+        Storage::fake('local');
+        $this->app->instance(ImapBillMailboxClient::class, new FakeBillInboxImapClient([
+            new FakeBillInboxImapMessage('42', $this->alipayRawMessage()),
+        ]));
+        $this->actingAs($this->user);
+        $this->configureAlipayMailbox();
+
+        $response = $this->post(route('bill-inbox.sync'));
+
+        $response->assertRedirect(route('bill-inbox.index'));
+
+        $task = BillTask::query()->where('source', 'alipay')->first();
+        $this->assertInstanceOf(BillTask::class, $task);
+        $this->assertSame('needs_secret', $task->status);
+        $this->assertSame('请输入支付宝服务消息中的账单解压密码', $task->currentSecretChallenge->prompt);
+        $this->assertSame('支付宝交易流水明细', $task->summary);
+        $this->assertSame('service@mail.alipay.com', $task->mailMessage->from_address);
+    }
+
     public function testSettingsSaveGmailConfigurationAndProcessingRules(): void
     {
         $response = $this->actingAs($this->user)->post(route('bill-inbox.settings.post'), [
@@ -190,6 +216,45 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame(['zip', 'pdf'], $rules[0]['attachment_extensions']);
         $this->assertSame('Bank Bills', $rules[0]['gmail_label']);
         $this->assertTrue($rules[0]['enabled']);
+    }
+
+    private function alipayRawMessage(): string
+    {
+        $email = (new \Symfony\Component\Mime\Email())
+            ->from('支付宝提醒 <service@mail.alipay.com>')
+            ->to('ziyufg@gmail.com')
+            ->subject('李昶乐的支付宝交易流水明细')
+            ->date(new \DateTimeImmutable('2026-06-12 18:26:00 +0800'))
+            ->text('附件已加密，解压密码已通过支付宝服务消息发送。')
+            ->attach('encrypted zip bytes', '支付宝交易明细(20260601-20260612).zip', 'application/zip')
+        ;
+        $email->getHeaders()->addIdHeader('Message-ID', 'alipay-statement-20260612@mail.alipay.com');
+
+        return $email->toString();
+    }
+
+    private function configureAlipayMailbox(): void
+    {
+        Preferences::set('bill_inbox_mailbox_enabled', true);
+        Preferences::set('bill_inbox_mailbox_provider', 'gmail');
+        Preferences::set('bill_inbox_mailbox_email', 'ziyufg@gmail.com');
+        Preferences::set('bill_inbox_mailbox_host', 'imap.gmail.com');
+        Preferences::set('bill_inbox_mailbox_port', 993);
+        Preferences::set('bill_inbox_mailbox_encryption', 'ssl');
+        Preferences::set('bill_inbox_mailbox_username', 'ziyufg@gmail.com');
+        Preferences::setEncrypted('bill_inbox_mailbox_password', 'gmail-app-password');
+        Preferences::set('bill_inbox_mailbox_folder', 'INBOX');
+        Preferences::set('bill_inbox_quick_gmail_label', '');
+        Preferences::set('bill_inbox_quick_keywords', '支付宝, 交易流水');
+        Preferences::set('bill_inbox_processing_rules', [[
+            'enabled'          => true,
+            'name'             => '支付宝交易流水',
+            'source'           => 'alipay',
+            'from_contains'    => 'service@mail.alipay.com',
+            'subject_contains' => '支付宝交易流水明细',
+            'gmail_label'      => '',
+            'keywords'         => ['支付宝', '交易流水'],
+        ]]);
     }
 
     #[Override]
@@ -254,4 +319,50 @@ final class BillInboxControllerTest extends TestCase
             'message'      => '任务已创建',
         ]);
     }
+}
+
+final class FakeBillInboxImapMessage
+{
+    public function __construct(
+        public readonly string $uid,
+        public readonly string $raw,
+    ) {}
+}
+
+final class FakeBillInboxImapClient implements ImapBillMailboxClient
+{
+    /** @var array<int, FakeBillInboxImapMessage> */
+    private array $messages;
+
+    /**
+     * @param array<int, FakeBillInboxImapMessage> $messages
+     */
+    public function __construct(array $messages)
+    {
+        $this->messages = $messages;
+    }
+
+    public function close(): void {}
+
+    public function connect(BillMailboxConfig $config): void {}
+
+    public function fetchRawMessage(string $uid): string
+    {
+        foreach ($this->messages as $message) {
+            if ($message->uid === $uid) {
+                return $message->raw;
+            }
+        }
+
+        return '';
+    }
+
+    public function markSeen(string $uid): void {}
+
+    public function search(string $criteria, int $limit): array
+    {
+        return array_slice(array_map(static fn (FakeBillInboxImapMessage $message): string => $message->uid, $this->messages), 0, $limit);
+    }
+
+    public function selectFolder(string $folder): void {}
 }

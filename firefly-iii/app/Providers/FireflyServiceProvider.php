@@ -53,6 +53,8 @@ use FireflyIII\Repositories\UserGroup\UserGroupRepository;
 use FireflyIII\Repositories\UserGroup\UserGroupRepositoryInterface;
 use FireflyIII\Repositories\Webhook\WebhookRepository;
 use FireflyIII\Repositories\Webhook\WebhookRepositoryInterface;
+use FireflyIII\Services\BillIngestion\ImapBillMailboxClient;
+use FireflyIII\Services\BillIngestion\NativeImapBillMailboxClient;
 use FireflyIII\Services\FireflyIIIOrg\Update\GitHubUpdateRequest;
 use FireflyIII\Services\FireflyIIIOrg\Update\UpdateRequestInterface;
 use FireflyIII\Services\Password\PwndVerifierV2;
@@ -120,6 +122,7 @@ class FireflyServiceProvider extends ServiceProvider
         $this->app->bind('piggybankform', static fn (): PiggyBankForm => new PiggyBankForm());
 
         $this->app->bind('ruleform', static fn (): RuleForm => new RuleForm());
+        $this->app->bind(ImapBillMailboxClient::class, NativeImapBillMailboxClient::class);
 
         // chart generator:
         $this->app->bind(GeneratorInterface::class, ChartJsGenerator::class);

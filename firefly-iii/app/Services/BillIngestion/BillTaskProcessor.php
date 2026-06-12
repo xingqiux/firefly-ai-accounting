@@ -71,7 +71,7 @@ class BillTaskProcessor
         if ($this->needsSecret($task)) {
             $challenge = $task->secretChallenges()->create([
                 'kind'     => 'password',
-                'prompt'   => '请输入账单解密密码或验证码',
+                'prompt'   => $this->secretPrompt($task),
                 'status'   => 'open',
                 'attempts' => 0,
             ]);
@@ -105,6 +105,15 @@ class BillTaskProcessor
     private function needsSecret(BillTask $task): bool
     {
         return $task->artifacts()->where('encrypted', true)->exists();
+    }
+
+    private function secretPrompt(BillTask $task): string
+    {
+        if ('alipay' === $task->source && 'alipay-statement' === $task->profile_id) {
+            return '请输入支付宝服务消息中的账单解压密码';
+        }
+
+        return '请输入账单解密密码或验证码';
     }
 
     private function appendEvent(BillTask $task, string $eventType, string $message): void

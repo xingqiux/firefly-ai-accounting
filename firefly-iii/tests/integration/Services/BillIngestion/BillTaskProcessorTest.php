@@ -67,6 +67,27 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('task.failed', $task->events()->latest('id')->first()->event_type);
     }
 
+    public function testAlipayEncryptedTaskRequestsAlipayServiceMessagePassword(): void
+    {
+        $task = $this->createTask('received', 'alipay', 'alipay-statement');
+        BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => '支付宝交易明细(20260601-20260612).zip',
+            'encrypted'    => true,
+            'metadata'     => ['password_source' => 'alipay_service_message'],
+        ]);
+
+        $result = app(BillTaskProcessor::class)->processBatch(10);
+
+        $this->assertSame(1, $result->processed);
+        $this->assertSame(0, $result->failed);
+
+        $task->refresh();
+        $this->assertSame('needs_secret', $task->status);
+        $this->assertSame('请输入支付宝服务消息中的账单解压密码', $task->currentSecretChallenge->prompt);
+    }
+
     public function testArtisanCommandRunsProcessorInFireflyBackend(): void
     {
         $this->createTask('received', 'unknown', null);

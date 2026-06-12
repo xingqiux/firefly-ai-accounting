@@ -6,7 +6,9 @@ namespace FireflyIII\Http\Controllers\BillInbox;
 
 use FireflyIII\Http\Controllers\Controller;
 use FireflyIII\Models\BillTask;
+use FireflyIII\Services\BillIngestion\BillMailboxSyncService;
 use FireflyIII\Services\BillIngestion\BillTaskActionService;
+use FireflyIII\Services\BillIngestion\BillTaskProcessor;
 use FireflyIII\Support\Facades\Preferences;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
@@ -17,8 +19,11 @@ use RuntimeException;
 
 class IndexController extends Controller
 {
-    public function __construct(private readonly BillTaskActionService $actionService)
-    {
+    public function __construct(
+        private readonly BillTaskActionService $actionService,
+        private readonly BillMailboxSyncService $mailboxSyncService,
+        private readonly BillTaskProcessor $taskProcessor,
+    ) {
         parent::__construct();
 
         $this->middleware(static function ($request, $next) {
@@ -114,6 +119,24 @@ class IndexController extends Controller
         }
 
         return redirect(route('bill-inbox.show', [$billTask->id]));
+    }
+
+    public function postSync(): RedirectResponse
+    {
+        $result    = $this->mailboxSyncService->syncForUser(auth()->user(), 25);
+        $processed = $this->taskProcessor->processBatch(25);
+
+        session()->flash('success', sprintf(
+            '邮箱同步完成：扫描 %d 封，新增 %d 个任务，忽略 %d 封，重复 %d 封，失败 %d 封；已推进 %d 个任务。',
+            $result->scanned,
+            $result->created,
+            $result->ignored,
+            $result->duplicates,
+            $result->failed,
+            $processed->processed
+        ));
+
+        return redirect(route('bill-inbox.index'));
     }
 
     public function postSettings(Request $request): RedirectResponse
