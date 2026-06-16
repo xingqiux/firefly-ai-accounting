@@ -35,6 +35,8 @@ interface BillSourceChannel
      */
     public function ingest(BillMailMessage $mail, array $attachments): BillTask;
 
+    public function prepare(BillTask $task): bool;
+
     public function needsSecret(BillTask $task): bool;
 
     public function secretPrompt(BillTask $task): string;

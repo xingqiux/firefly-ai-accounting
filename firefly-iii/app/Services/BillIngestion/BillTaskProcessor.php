@@ -71,6 +71,12 @@ class BillTaskProcessor
             return true;
         }
 
+        if (false === $channel->prepare($task)) {
+            return false;
+        }
+
+        $task->refresh();
+
         if ($channel->needsSecret($task)) {
             $challenge = $task->secretChallenges()->create([
                 'kind'     => 'password',

@@ -35,7 +35,9 @@
                             </div>
                             <div class="col-sm-3">
                                 <small class="text-muted">内置渠道</small><br>
-                                支付宝交易流水
+                                {% for channel in builtInChannels %}
+                                    {{ channel.name }}{% if not loop.last %}<br>{% endif %}
+                                {% endfor %}
                             </div>
                             <div class="col-sm-3">
                                 <small class="text-muted">凭据</small><br>
@@ -50,11 +52,13 @@
                             <p class="text-warning" style="margin: 10px 0 0;">
                                 邮箱配置已保存，但同步开关未启用。进入邮箱配置页勾选“启用账单邮箱同步”后，后续同步 worker 才会处理邮件。
                             </p>
-                        {% endif %}
-                        {% if autoSync and autoSync.errors is defined and autoSync.errors|length > 0 %}
-                            <p class="text-danger" style="margin: 10px 0 0;">自动同步失败：{{ autoSync.errors|join(' ') }}</p>
-                        {% elseif autoSync %}
-                            <p class="text-muted" style="margin: 10px 0 0;">自动同步：新增 {{ autoSync.created }}，重复 {{ autoSync.duplicates }}，推进 {{ autoSync.processed }}。</p>
+                        {% else %}
+                            <form method="POST" action="{{ route('bill-inbox.sync') }}" style="margin: 10px 0 0;">
+                                <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <span class="fa fa-refresh fa-fw"></span> 立即同步
+                                </button>
+                            </form>
                         {% endif %}
                     </div>
                     <div class="btn-group" role="group">
@@ -68,7 +72,7 @@
                 </div>
                 <div class="box-body no-padding">
                     {% if tasks.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱后，支付宝交易流水邮件会显示在这里。</p>
+                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱后，内置渠道识别出的账单邮件会显示在这里。</p>
                     {% else %}
                         <form method="POST" action="{{ route('bill-inbox.archive-many') }}">
                             <input type="hidden" name="_token" value="{{ csrf_token() }}">

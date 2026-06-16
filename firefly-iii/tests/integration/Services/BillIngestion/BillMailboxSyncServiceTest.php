@@ -41,8 +41,12 @@ final class BillMailboxSyncServiceTest extends TestCase
 
         $registry = app($registryClass);
 
-        $this->assertSame(['FROM "service@mail.alipay.com"'], $registry->mailboxSearchCriteria());
+        $this->assertSame([
+            'FROM "service@mail.alipay.com"',
+            'FROM "wechatpay@tencent.com"',
+        ], $registry->mailboxSearchCriteria());
         $this->assertSame('alipay', $registry->find('alipay', 'alipay-statement')?->source());
+        $this->assertSame('wechat', $registry->find('wechat', 'wechat-pay-statement')?->source());
     }
 
     public function testSyncCreatesAlipayTaskFromConfiguredGmailMailbox(): void
@@ -63,7 +67,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame(0, $result->duplicates);
         $this->assertSame(0, $result->failed);
         $this->assertSame(['INBOX'], $client->selectedFolders);
-        $this->assertSame(['FROM "service@mail.alipay.com"'], $client->searches);
+        $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertSame(['42'], $client->seenUids);
 
         $mail = BillMailMessage::query()->first();
@@ -90,6 +94,45 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame('alipay_service_message', $artifact->metadata['password_source']);
         $this->assertNotNull($artifact->path);
         Storage::disk('local')->assertExists($artifact->path);
+    }
+
+    public function testSyncCreatesWechatTaskFromDownloadedLinkMail(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient([
+            new FakeImapMailMessage('88', $this->wechatRawMessage()),
+        ]);
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox();
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+
+        $this->assertSame(1, $result->scanned);
+        $this->assertSame(1, $result->created);
+        $this->assertSame(0, $result->failed);
+        $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
+        $this->assertSame(['88'], $client->seenUids);
+
+        $mail = BillMailMessage::query()->first();
+        $this->assertSame('<wechat-pay-statement-20260615@tencent.com>', $mail->message_id);
+        $this->assertSame('wechatpay@tencent.com', $mail->from_address);
+        $this->assertSame('微信支付-账单流水文件(20260515-20260615)', $mail->subject);
+        $this->assertNotNull($mail->body_text_path);
+        $this->assertNotNull($mail->body_html_path);
+        Storage::disk('local')->assertExists($mail->body_text_path);
+        Storage::disk('local')->assertExists($mail->body_html_path);
+
+        $task = BillTask::query()->first();
+        $this->assertSame('wechat', $task->source);
+        $this->assertSame('wechat-pay-statement', $task->profile_id);
+        $this->assertSame('received', $task->status);
+        $this->assertSame('微信支付账单流水', $task->summary);
+        $this->assertSame('2026-05-15', $task->metadata['statement_period']['start']);
+        $this->assertSame('2026-06-15', $task->metadata['statement_period']['end']);
+        $this->assertSame('wechat_pay_official_account', $task->metadata['password_source']);
+        $this->assertSame('tenpay_download', $task->metadata['remote_file']['source']);
+        $this->assertArrayNotHasKey('url', $task->metadata['remote_file']);
+        $this->assertArrayNotHasKey('encrypted_file_data', $task->metadata['remote_file']);
     }
 
     public function testSyncSkipsDuplicateMessages(): void
@@ -134,7 +177,8 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame(0, $result->failed);
         $this->assertSame([], $result->errors);
         $this->assertSame(['INBOX'], $client->selectedFolders);
-        $this->assertSame(['FROM "service@mail.alipay.com"'], $client->searches);
+        $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
+        $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
     }
 
     public function testBuiltInAlipayChannelDoesNotDependOnCustomProcessingRules(): void
@@ -158,7 +202,8 @@ final class BillMailboxSyncServiceTest extends TestCase
 
         $this->assertSame(1, $result->created);
         $this->assertSame(['INBOX'], $client->selectedFolders);
-        $this->assertSame(['FROM "service@mail.alipay.com"'], $client->searches);
+        $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
+        $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
     }
 
     public function testSyncDoesNothingWhenMailboxIsDisabled(): void
@@ -242,6 +287,41 @@ final class BillMailboxSyncServiceTest extends TestCase
             ->attach('encrypted zip bytes', '支付宝交易明细(20260601-20260612).zip', 'application/zip')
         ;
         $email->getHeaders()->addIdHeader('Message-ID', 'alipay-statement-20260612@mail.alipay.com');
+
+        return $email->toString();
+    }
+
+    private function wechatRawMessage(): string
+    {
+        $downloadUrl = 'https://tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?encrypted_file_data=encrypted-token-123';
+        $text        = <<<TEXT
+你好，
+
+微信用户 x******ux 申请的微信支付账单流水文件(20260515-20260615)已生成，请下载查阅（若手机无法下载，请在电脑端下载）。基于安全考虑，文件已加密。
+解压密码已通过【微信支付】公众号发送至申请人微信。
+如非本人操作，请忽略。
+点击下载 {$downloadUrl}
+7天内有效
+TEXT;
+        $html        = <<<HTML
+<html><body>
+<p>你好，</p>
+<p>微信用户 x******ux 申请的微信支付账单流水文件(20260515-20260615)已生成，请下载查阅（若手机无法下载，请在电脑端下载）。基于安全考虑，文件已加密。</p>
+<p>解压密码已通过【微信支付】公众号发送至申请人微信。</p>
+<a href="{$downloadUrl}">点击下载</a>
+<p>7天内有效</p>
+</body></html>
+HTML;
+
+        $email = (new \Symfony\Component\Mime\Email())
+            ->from('微信支付 <wechatpay@tencent.com>')
+            ->to('ziyufg@gmail.com')
+            ->subject('微信支付-账单流水文件(20260515-20260615)')
+            ->date(new \DateTimeImmutable('2026-06-15 19:14:00 +0800'))
+            ->text($text)
+            ->html($html)
+        ;
+        $email->getHeaders()->addIdHeader('Message-ID', 'wechat-pay-statement-20260615@tencent.com');
 
         return $email->toString();
     }

@@ -6,12 +6,14 @@ namespace Tests\integration\Services\BillIngestion;
 
 use Carbon\Carbon;
 use FireflyIII\Models\BillArtifact;
+use FireflyIII\Models\BillMailMessage;
 use FireflyIII\Models\BillStatementImport;
 use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillTaskProcessor;
 use FireflyIII\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Override;
 use Tests\integration\TestCase;
@@ -90,6 +92,67 @@ final class BillTaskProcessorTest extends TestCase
         $task->refresh();
         $this->assertSame('needs_secret', $task->status);
         $this->assertSame('请输入支付宝服务消息中的账单解压密码', $task->currentSecretChallenge->prompt);
+    }
+
+    public function testWechatReceivedTaskDownloadsRemoteStatementAndRequestsWechatPassword(): void
+    {
+        Storage::fake('local');
+        Http::fake([
+            'tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail*' => Http::response('wechat encrypted zip bytes', 200, [
+                'Content-Type'        => 'application/zip',
+                'Content-Disposition' => 'attachment; filename="wechat-statement.zip"',
+            ]),
+        ]);
+
+        $mail = BillMailMessage::query()->create([
+            'user_id'        => $this->user->id,
+            'message_id'     => '<wechat-pay-statement-20260615@tencent.com>',
+            'mailbox'        => 'ziyufg@gmail.com',
+            'from_address'   => 'wechatpay@tencent.com',
+            'to_address'     => 'ziyufg@gmail.com',
+            'subject'        => '微信支付-账单流水文件(20260515-20260615)',
+            'received_at'    => Carbon::parse('2026-06-15 19:14:00', 'Asia/Shanghai'),
+            'body_html_path' => 'bill-inbox/1/wechat/message.html',
+        ]);
+        Storage::disk('local')->put($mail->body_html_path, '<a href="https://tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?encrypted_file_data=encrypted-token-123">点击下载</a>');
+
+        $task = BillTask::query()->create([
+            'user_id'              => $this->user->id,
+            'bill_mail_message_id' => $mail->id,
+            'source'               => 'wechat',
+            'profile_id'           => 'wechat-pay-statement',
+            'status'               => 'received',
+            'received_at'          => Carbon::parse('2026-06-15 19:14:00', 'Asia/Shanghai'),
+            'summary'              => '微信支付账单流水',
+            'metadata'             => [
+                'statement_period' => ['start' => '2026-05-15', 'end' => '2026-06-15'],
+                'remote_file'      => [
+                    'source' => 'tenpay_download',
+                    'status' => 'pending',
+                ],
+            ],
+        ]);
+
+        $result = app(BillTaskProcessor::class)->processBatch(10);
+
+        $this->assertSame(1, $result->processed);
+        $this->assertSame(0, $result->failed);
+
+        $task->refresh();
+        $this->assertSame('needs_secret', $task->status);
+        $this->assertSame('请输入微信支付公众号收到的账单解压密码', $task->currentSecretChallenge->prompt);
+        $this->assertSame('downloaded', $task->metadata['remote_file']['status']);
+        $this->assertArrayNotHasKey('url', $task->metadata['remote_file']);
+
+        $artifact = $task->artifacts()->first();
+        $this->assertInstanceOf(BillArtifact::class, $artifact);
+        $this->assertSame('zip', $artifact->kind);
+        $this->assertSame('wechat-statement.zip', $artifact->filename);
+        $this->assertTrue($artifact->encrypted);
+        $this->assertSame('remote_download', $artifact->metadata['source']);
+        Storage::disk('local')->assertExists($artifact->path);
+        $this->assertSame('wechat encrypted zip bytes', Storage::disk('local')->get($artifact->path));
+        Http::assertSentCount(1);
     }
 
     public function testAlipayReadyTaskWithoutSecretRequestsPasswordAgain(): void
@@ -203,6 +266,114 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame(3, BillStatementRow::query()->where('bill_statement_import_id', $import->id)->count());
     }
 
+    public function testWechatReadyTaskWithSecretExtractsStatementIntoEditableImportRows(): void
+    {
+        Storage::fake('local');
+        $task    = $this->createTask('ready', 'wechat', 'wechat-pay-statement');
+        $zipPath = 'bill-inbox/1/20260615191400000/remote/wechat-pay-statement.zip';
+        Storage::disk('local')->put($zipPath, $this->encryptedZipBytes('zip-secret', $this->wechatStatementCsv(), 'wechat-pay-records.csv'));
+        $zip     = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => 'wechat-pay-statement.zip',
+            'path'         => $zipPath,
+            'encrypted'    => true,
+            'metadata'     => [
+                'source'          => 'remote_download',
+                'password_source' => 'wechat_pay_official_account',
+            ],
+        ]);
+
+        $processed = app(BillTaskProcessor::class)->process($task, 'zip-secret');
+
+        $this->assertTrue($processed);
+
+        $task->refresh();
+        $this->assertSame('parsed', $task->status);
+        $this->assertSame(1, $task->metadata['parsed_artifact_count']);
+
+        $artifact = $task->artifacts()->where('derived_from_artifact_id', $zip->id)->first();
+        $this->assertInstanceOf(BillArtifact::class, $artifact);
+        $this->assertSame('csv', $artifact->kind);
+        $this->assertSame('wechat-pay-202606151914-20260515_20260615.csv', $artifact->filename);
+        Storage::disk('local')->assertExists($artifact->path);
+
+        $import = BillStatementImport::query()->where('bill_artifact_id', $artifact->id)->first();
+        $this->assertInstanceOf(BillStatementImport::class, $import);
+        $this->assertSame('wechat', $import->source);
+        $this->assertSame('wechat-pay-statement', $import->profile_id);
+        $this->assertSame('2026-06-15 19:14:00', $import->exported_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-05-15', $import->period_start->format('Y-m-d'));
+        $this->assertSame('2026-06-15', $import->period_end->format('Y-m-d'));
+        $this->assertSame(2, $import->row_count);
+
+        $first = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $first);
+        $this->assertSame('2026-06-15 18:00:00', $first->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame('餐饮美食', $first->platform_category);
+        $this->assertSame('霸王茶姬', $first->counterparty);
+        $this->assertSame('支出', $first->direction);
+        $this->assertSame('16', (string) $first->amount);
+        $this->assertSame('招商银行储蓄卡(8705)', $first->payment_method);
+        $this->assertSame('withdrawal', $first->firefly_type);
+        $this->assertSame('招商银行', $first->source_name);
+        $this->assertSame('霸王茶姬', $first->destination_name);
+        $this->assertSame('微信支付交易单号：420000000000000001', $first->notes);
+    }
+
+    public function testWechatReadyTaskWithSecretExtractsXlsxStatementIntoEditableImportRows(): void
+    {
+        Storage::fake('local');
+        $task    = $this->createTask('ready', 'wechat', 'wechat-pay-statement');
+        $zipPath = 'bill-inbox/1/20260615191400000/remote/wechat-pay-statement.zip';
+        Storage::disk('local')->put($zipPath, $this->encryptedZipBytes('zip-secret', $this->wechatStatementXlsx(), 'wechat-pay-records.xlsx'));
+        $zip     = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => 'wechat-pay-statement.zip',
+            'path'         => $zipPath,
+            'encrypted'    => true,
+            'metadata'     => [
+                'source'          => 'remote_download',
+                'password_source' => 'wechat_pay_official_account',
+            ],
+        ]);
+
+        $processed = app(BillTaskProcessor::class)->process($task, 'zip-secret');
+
+        $this->assertTrue($processed);
+
+        $task->refresh();
+        $this->assertSame('parsed', $task->status);
+        $this->assertSame(1, $task->metadata['parsed_artifact_count']);
+
+        $artifact = $task->artifacts()->where('derived_from_artifact_id', $zip->id)->first();
+        $this->assertInstanceOf(BillArtifact::class, $artifact);
+        $this->assertSame('xlsx', $artifact->kind);
+        $this->assertSame('wechat-pay-202606151914-20260515_20260615.xlsx', $artifact->filename);
+
+        $import = BillStatementImport::query()->where('bill_artifact_id', $artifact->id)->first();
+        $this->assertInstanceOf(BillStatementImport::class, $import);
+        $this->assertSame('wechat', $import->source);
+        $this->assertSame('wechat-pay-statement', $import->profile_id);
+        $this->assertSame('2026-06-15 19:14:00', $import->exported_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-05-15', $import->period_start->format('Y-m-d'));
+        $this->assertSame('2026-06-15', $import->period_end->format('Y-m-d'));
+        $this->assertSame(2, $import->row_count);
+
+        $first = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $first);
+        $this->assertSame('2026-06-15 18:00:00', $first->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame('餐饮美食', $first->platform_category);
+        $this->assertSame('霸王茶姬', $first->counterparty);
+        $this->assertSame('支出', $first->direction);
+        $this->assertSame('16.8', (string) $first->amount);
+        $this->assertSame('招商银行储蓄卡(8705)', $first->payment_method);
+        $this->assertSame('withdrawal', $first->firefly_type);
+        $this->assertSame('招商银行', $first->source_name);
+        $this->assertSame('霸王茶姬', $first->destination_name);
+    }
+
     public function testArtisanCommandRunsProcessorInFireflyBackend(): void
     {
         $this->createTask('received', 'unknown', null);
@@ -237,7 +408,7 @@ final class BillTaskProcessorTest extends TestCase
         ]);
     }
 
-    private function encryptedZipBytes(string $password, ?string $csv = null): string
+    private function encryptedZipBytes(string $password, ?string $csv = null, string $filename = 'alipay-records.csv'): string
     {
         $path = tempnam(sys_get_temp_dir(), 'alipay-statement-');
         if (false === $path) {
@@ -250,8 +421,8 @@ final class BillTaskProcessorTest extends TestCase
         }
 
         $zip->setPassword($password);
-        $zip->addFromString('alipay-records.csv', $csv ?? "交易时间,交易分类,交易对方,金额\n2026-06-12 10:00,餐饮,测试商户,-12.30\n");
-        $zip->setEncryptionName('alipay-records.csv', ZipArchive::EM_AES_256, $password);
+        $zip->addFromString($filename, $csv ?? "交易时间,交易分类,交易对方,金额\n2026-06-12 10:00,餐饮,测试商户,-12.30\n");
+        $zip->setEncryptionName($filename, ZipArchive::EM_AES_256, $password);
         $zip->close();
 
         $bytes = file_get_contents($path);
@@ -285,5 +456,120 @@ final class BillTaskProcessorTest extends TestCase
 2026-06-15 10:22:14,信用借还,花呗,/,花呗主动还款-2026年07月账单,不计收支,123.00,招商银行储蓄卡(8705),还款成功,2026061529020999870179346714,,
 2026-06-15 09:30:52,日用百货,安徽邻几（肥西亚坤大厦店）,209***@qq.com,11400肥西亚坤大厦店,支出,3.32,花呗&花呗青春特惠,交易成功,2026061523001414871431914548,11400A260615093044,
 CSV, 'GB18030', 'UTF-8');
+    }
+
+    private function wechatStatementCsv(): string
+    {
+        return mb_convert_encoding(<<<'CSV'
+微信支付账单明细
+微信昵称：[x******ux]
+起始时间：[2026-05-15 00:00:00]    终止时间：[2026-06-15 23:59:59]
+导出类型：[全部]
+导出时间：[2026-06-15 19:14:00]
+共2笔记录
+
+交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注
+2026-06-15 18:00:00,餐饮美食,霸王茶姬,轻乳茶,支出,16.00,招商银行储蓄卡(8705),支付成功,420000000000000001,merchant-1,
+2026-06-15 08:30:00,转账红包,李四,微信转账,收入,50.00,零钱,已收钱,420000000000000002,merchant-2,
+CSV, 'UTF-8', 'UTF-8');
+    }
+
+    private function wechatStatementXlsx(): string
+    {
+        $sharedStrings = [
+            '微信支付账单明细',
+            '微信昵称：[x******ux]',
+            '起始时间：[2026-05-15 00:00:00] 终止时间：[2026-06-15 23:59:59]',
+            '导出类型：[全部]',
+            '导出时间：[2026-06-15 19:14:00]',
+            '共2笔记录',
+            '收入：1笔 50.00元',
+            '支出：1笔 16.80元',
+            '中性交易：0笔 0.00元',
+            '注：',
+            '1. 本明细仅供个人对账使用',
+            '----------------------微信支付账单明细列表--------------------',
+            '交易时间',
+            '交易类型',
+            '交易对方',
+            '商品',
+            '收/支',
+            '金额(元)',
+            '支付方式',
+            '当前状态',
+            '交易单号',
+            '商户单号',
+            '备注',
+            '餐饮美食',
+            '霸王茶姬',
+            '轻乳茶',
+            '支出',
+            '招商银行储蓄卡(8705)',
+            '支付成功',
+            '420000000000000001',
+            'merchant-1',
+            '/',
+            '转账红包',
+            '李四',
+            '微信转账',
+            '收入',
+            '零钱',
+            '已收钱',
+            '420000000000000002',
+            'merchant-2',
+        ];
+
+        $sheetRows = [];
+        for ($row = 1; $row <= 11; ++$row) {
+            $sheetRows[] = sprintf('<row r="%d"><c r="A%d" t="s"><v>%d</v></c></row>', $row, $row, $row - 1);
+        }
+        $sheetRows[] = '<row r="13"><c r="A13" t="s"><v>11</v></c></row>';
+        $sheetRows[] = '<row r="14">'
+            .'<c r="A14" t="s"><v>12</v></c><c r="B14" t="s"><v>13</v></c><c r="C14" t="s"><v>14</v></c>'
+            .'<c r="D14" t="s"><v>15</v></c><c r="E14" t="s"><v>16</v></c><c r="F14" t="s"><v>17</v></c>'
+            .'<c r="G14" t="s"><v>18</v></c><c r="H14" t="s"><v>19</v></c><c r="I14" t="s"><v>20</v></c>'
+            .'<c r="J14" t="s"><v>21</v></c><c r="K14" t="s"><v>22</v></c></row>';
+        $sheetRows[] = '<row r="15">'
+            .'<c r="A15"><v>46188.75</v></c><c r="B15" t="s"><v>23</v></c><c r="C15" t="s"><v>24</v></c>'
+            .'<c r="D15" t="s"><v>25</v></c><c r="E15" t="s"><v>26</v></c><c r="F15"><v>16.8</v></c>'
+            .'<c r="G15" t="s"><v>27</v></c><c r="H15" t="s"><v>28</v></c><c r="I15" t="s"><v>29</v></c>'
+            .'<c r="J15" t="s"><v>30</v></c><c r="K15" t="s"><v>31</v></c></row>';
+        $sheetRows[] = '<row r="16">'
+            .'<c r="A16"><v>46188.354166666664</v></c><c r="B16" t="s"><v>32</v></c><c r="C16" t="s"><v>33</v></c>'
+            .'<c r="D16" t="s"><v>34</v></c><c r="E16" t="s"><v>35</v></c><c r="F16"><v>50</v></c>'
+            .'<c r="G16" t="s"><v>36</v></c><c r="H16" t="s"><v>37</v></c><c r="I16" t="s"><v>38</v></c>'
+            .'<c r="J16" t="s"><v>39</v></c><c r="K16" t="s"><v>31</v></c></row>';
+
+        $files = [
+            '[Content_Types].xml'      => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
+            '_rels/.rels'              => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+            'xl/_rels/workbook.xml.rels'=> '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>',
+            'xl/workbook.xml'          => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            'xl/sharedStrings.xml'     => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="'.count($sharedStrings).'" uniqueCount="'.count($sharedStrings).'">'.implode('', array_map(static fn (string $value): string => '<si><t>'.htmlspecialchars($value, ENT_XML1).'</t></si>', $sharedStrings)).'</sst>',
+            'xl/worksheets/sheet1.xml' => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:K16"/><sheetData>'.implode('', $sheetRows).'</sheetData></worksheet>',
+        ];
+
+        $path = tempnam(sys_get_temp_dir(), 'wechat-statement-xlsx-');
+        if (false === $path) {
+            throw new \RuntimeException('Could not create temporary xlsx file.');
+        }
+
+        $zip = new ZipArchive();
+        if (true !== $zip->open($path, ZipArchive::OVERWRITE)) {
+            throw new \RuntimeException('Could not open temporary xlsx file.');
+        }
+        foreach ($files as $name => $content) {
+            $zip->addFromString($name, $content);
+        }
+        $zip->close();
+
+        $bytes = file_get_contents($path);
+        @unlink($path);
+
+        if (false === $bytes) {
+            throw new \RuntimeException('Could not read temporary xlsx file.');
+        }
+
+        return $bytes;
     }
 }

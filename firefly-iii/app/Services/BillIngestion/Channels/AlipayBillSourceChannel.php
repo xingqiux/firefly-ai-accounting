@@ -112,6 +112,11 @@ class AlipayBillSourceChannel implements BillSourceChannel
         return $task->artifacts()->where('encrypted', true)->exists();
     }
 
+    public function prepare(BillTask $task): bool
+    {
+        return true;
+    }
+
     public function secretPrompt(BillTask $task): string
     {
         return '请输入支付宝服务消息中的账单解压密码';

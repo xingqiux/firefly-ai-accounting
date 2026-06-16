@@ -114,7 +114,7 @@ trait BillTaskResponse
                 'current_secret_challenge_id' => null === $task->current_secret_challenge_id ? null : (string) $task->current_secret_challenge_id,
                 'error_code'                  => $task->error_code,
                 'error_message'               => $task->error_message,
-                'metadata'                    => $task->metadata,
+                'metadata'                    => $this->publicMetadata($task->metadata),
                 'created_at'                  => optional($task->created_at)->toAtomString(),
                 'updated_at'                  => optional($task->updated_at)->toAtomString(),
             ],
@@ -169,7 +169,7 @@ trait BillTaskResponse
                 'checksum'                 => $artifact->checksum,
                 'encrypted'                => $artifact->encrypted,
                 'derived_from_artifact_id' => null === $artifact->derived_from_artifact_id ? null : (string) $artifact->derived_from_artifact_id,
-                'metadata'                 => $artifact->metadata,
+                'metadata'                 => $this->publicMetadata($artifact->metadata),
                 'download_url'             => route('api.v1.bill-artifacts.download', [$artifact->id]),
                 'created_at'               => optional($artifact->created_at)->toAtomString(),
             ],
@@ -202,7 +202,7 @@ trait BillTaskResponse
                 'bill_task_id' => (string) $event->bill_task_id,
                 'event_type'   => $event->event_type,
                 'message'      => $event->message,
-                'metadata'     => $event->metadata,
+                'metadata'     => $this->publicMetadata($event->metadata),
                 'created_at'   => optional($event->created_at)->toAtomString(),
             ],
         ];
@@ -224,7 +224,7 @@ trait BillTaskResponse
                 'period_end'        => optional($import->period_end)->toDateString(),
                 'row_count'         => $import->row_count,
                 'status'            => $import->status,
-                'metadata'          => $import->metadata,
+                'metadata'          => $this->publicMetadata($import->metadata),
             ],
         ];
     }
@@ -263,10 +263,31 @@ trait BillTaskResponse
                 'tags'                     => $row->tags,
                 'transaction_group_id'     => null === $row->transaction_group_id ? null : (string) $row->transaction_group_id,
                 'error_message'            => $row->error_message,
-                'metadata'                 => $row->metadata,
+                'metadata'                 => $this->publicMetadata($row->metadata),
                 'created_at'               => optional($row->created_at)->toAtomString(),
                 'updated_at'               => optional($row->updated_at)->toAtomString(),
             ],
         ];
+    }
+
+    private function publicMetadata(mixed $metadata): mixed
+    {
+        if (!is_array($metadata)) {
+            return $metadata;
+        }
+
+        $public = [];
+        foreach ($metadata as $key => $value) {
+            if (is_string($key) && in_array($key, ['url', 'encrypted_file_data'], true)) {
+                continue;
+            }
+            if (is_string($value) && str_contains($value, 'tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail')) {
+                continue;
+            }
+
+            $public[$key] = $this->publicMetadata($value);
+        }
+
+        return $public;
     }
 }

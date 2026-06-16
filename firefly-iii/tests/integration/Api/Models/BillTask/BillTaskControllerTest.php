@@ -103,6 +103,65 @@ final class BillTaskControllerTest extends TestCase
         $response->assertJsonPath('included.3.type', 'bill-task-events');
     }
 
+    public function testApiRedactsWechatRemoteDownloadTokensFromMetadata(): void
+    {
+        $downloadUrl = 'https://tenpay.wechatpay.cn/userroll/userbilldownload/downloadfilefromemail?encrypted_file_data=secret-token-123';
+
+        $task = BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'wechat',
+            'profile_id'  => 'wechat-pay-statement',
+            'status'      => 'needs_secret',
+            'received_at' => Carbon::parse('2026-06-15 19:14:00', 'Asia/Shanghai'),
+            'summary'     => '微信支付账单流水',
+            'metadata'    => [
+                'remote_file' => [
+                    'status'              => 'pending',
+                    'url'                 => $downloadUrl,
+                    'encrypted_file_data' => 'secret-token-123',
+                    'host'                => 'tenpay.wechatpay.cn',
+                ],
+            ],
+        ]);
+
+        BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => 'wechat-pay-statement.zip',
+            'path'         => 'bill-inbox/1/remote/wechat-pay-statement.zip',
+            'checksum'     => 'wechat-artifact-checksum',
+            'encrypted'    => true,
+            'metadata'     => [
+                'source'      => 'remote_download',
+                'remote_file' => [
+                    'url'                 => $downloadUrl,
+                    'encrypted_file_data' => 'secret-token-123',
+                ],
+            ],
+        ]);
+
+        $this->actingAs($this->user, 'api');
+
+        $show = $this->getJson(route('api.v1.bill-tasks.show', ['billTask' => $task->id]));
+        $show->assertStatus(200);
+        $show->assertJsonPath('data.attributes.metadata.remote_file.status', 'pending');
+        $show->assertJsonPath('data.attributes.metadata.remote_file.host', 'tenpay.wechatpay.cn');
+        $show->assertJsonMissingPath('data.attributes.metadata.remote_file.url');
+        $show->assertJsonMissingPath('data.attributes.metadata.remote_file.encrypted_file_data');
+
+        $artifacts = $this->getJson(route('api.v1.bill-tasks.artifacts', ['billTask' => $task->id]));
+        $artifacts->assertStatus(200);
+        $artifacts->assertJsonMissingPath('data.0.attributes.metadata.remote_file.url');
+        $artifacts->assertJsonMissingPath('data.0.attributes.metadata.remote_file.encrypted_file_data');
+
+        $this->assertStringNotContainsString('secret-token-123', $show->getContent());
+        $this->assertStringNotContainsString('encrypted_file_data', $show->getContent());
+        $this->assertStringNotContainsString('downloadfilefromemail', $show->getContent());
+        $this->assertStringNotContainsString('secret-token-123', $artifacts->getContent());
+        $this->assertStringNotContainsString('encrypted_file_data', $artifacts->getContent());
+        $this->assertStringNotContainsString('downloadfilefromemail', $artifacts->getContent());
+    }
+
     public function testListsArtifactsAndEvents(): void
     {
         $this->actingAs($this->user, 'api');

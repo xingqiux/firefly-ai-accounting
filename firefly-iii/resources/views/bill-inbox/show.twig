@@ -250,7 +250,7 @@
                             {% for artifact in task.artifacts %}
                                 <tr>
                                     <td>{{ artifact.kind }}</td>
-                                    <td>{{ artifact.filename|default(artifact.path|default('-')) }}</td>
+                                    <td>{{ artifact.display_name|default(artifact.filename|default(artifact.path|default('-'))) }}</td>
                                     <td>
                                         <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.artifact.download', [artifact.id]) }}">
                                             <span class="fa fa-download fa-fw"></span> 下载

@@ -173,6 +173,9 @@ class BillMailboxSyncService
 
         Storage::disk('local')->put($rawPath, $raw);
 
+        $bodyTextPath = $this->storeBodyPart($basePath, 'text', $message['body_text']);
+        $bodyHtmlPath = $this->storeBodyPart($basePath, 'html', $message['body_html']);
+
         foreach ($message['attachments'] as $index => $attachment) {
             $attachmentPath = $this->storeAttachment($basePath, $index, $attachment['filename'], $attachment['content']);
             $attachments[]  = new BillMailAttachment(
@@ -192,6 +195,8 @@ class BillMailboxSyncService
             'subject'      => $message['subject'],
             'received_at'  => $message['received_at'],
             'raw_path'     => $rawPath,
+            'body_text_path'=> $bodyTextPath,
+            'body_html_path'=> $bodyHtmlPath,
             'checksum'     => hash('sha256', $raw),
             'sync_cursor'  => sprintf('gmail:%s', $uid),
         ]);
@@ -203,6 +208,19 @@ class BillMailboxSyncService
     {
         $filename = preg_replace('/[\/\\\\]+/', '_', $filename) ?: sprintf('attachment-%d.bin', $index + 1);
         $path     = sprintf('%s/attachments/%02d-%s', $basePath, $index + 1, $filename);
+        Storage::disk('local')->put($path, $content);
+
+        return $path;
+    }
+
+    private function storeBodyPart(string $basePath, string $kind, ?string $content): ?string
+    {
+        if (null === $content || '' === trim($content)) {
+            return null;
+        }
+
+        $extension = 'html' === $kind ? 'html' : 'txt';
+        $path      = sprintf('%s/body.%s', $basePath, $extension);
         Storage::disk('local')->put($path, $content);
 
         return $path;
@@ -355,7 +373,7 @@ class BillMailboxSyncService
     }
 
     /**
-     * @return array{message_id: ?string, from_address: ?string, to_address: ?string, subject: ?string, received_at: ?Carbon, attachments: array<int, array{filename: string, content: string}>}
+     * @return array{message_id: ?string, from_address: ?string, to_address: ?string, subject: ?string, received_at: ?Carbon, body_text: ?string, body_html: ?string, attachments: array<int, array{filename: string, content: string}>}
      */
     private function parseMessage(string $raw): array
     {
@@ -369,8 +387,39 @@ class BillMailboxSyncService
             'to_address'   => $this->emailAddress($this->decodedHeader($this->header($headers, 'to'))),
             'subject'      => $this->decodedHeader($this->header($headers, 'subject')),
             'received_at'  => null === $date || '' === $date ? null : Carbon::parse($date),
+            'body_text'    => $this->parseBodyPart($body, $headers, 'text/plain'),
+            'body_html'    => $this->parseBodyPart($body, $headers, 'text/html'),
             'attachments'  => $this->parseAttachments($body, $headers),
         ];
+    }
+
+    private function parseBodyPart(string $body, array $headers, string $targetMediaType): ?string
+    {
+        $contentType = $this->header($headers, 'content-type') ?? '';
+        $mediaType   = $this->mainHeaderValue($contentType);
+        if (str_starts_with($mediaType, 'multipart/')) {
+            $parameters = $this->headerParameters($contentType);
+            $boundary   = (string) ($parameters['boundary'] ?? '');
+            if ('' === $boundary) {
+                return null;
+            }
+
+            foreach ($this->splitMultipartBody($body, $boundary) as $part) {
+                [$partHeaders, $partBody] = $this->splitRawMessage($part);
+                $content                  = $this->parseBodyPart($partBody, $this->parseHeaders($partHeaders), $targetMediaType);
+                if (null !== $content) {
+                    return $content;
+                }
+            }
+
+            return null;
+        }
+
+        if ($mediaType !== strtolower($targetMediaType)) {
+            return null;
+        }
+
+        return $this->decodePartBody($body, (string) ($this->header($headers, 'content-transfer-encoding') ?? ''));
     }
 
     private function partFilename(array $headers): ?string

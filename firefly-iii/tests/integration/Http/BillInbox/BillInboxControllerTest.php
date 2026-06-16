@@ -73,9 +73,29 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('money@example.com');
         $response->assertSee('INBOX');
         $response->assertSee('支付宝交易流水');
+        $response->assertSee('微信支付账单流水');
         $response->assertDontSee('buii');
         $response->assertDontSee('账单, statement');
         $response->assertSee('应用密码已保存');
+    }
+
+    public function testIndexDoesNotSyncMailboxUntilUserClicksSync(): void
+    {
+        $client = new FakeBillInboxImapClient([
+            new FakeBillInboxImapMessage('42', $this->alipayRawMessage()),
+        ]);
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->actingAs($this->user);
+        $this->configureAlipayMailbox();
+
+        $response = $this->get(route('bill-inbox.index'));
+
+        $response->assertStatus(200);
+        $response->assertSee('立即同步');
+        $response->assertDontSee('自动同步：');
+        $this->assertFalse($client->connected);
+        $this->assertSame([], $client->searches);
+        $this->assertSame(0, BillTask::query()->where('source', 'alipay')->count());
     }
 
     public function testIndexHidesCleanedTasksByDefaultButKeepsStatusFilter(): void
@@ -125,6 +145,44 @@ final class BillInboxControllerTest extends TestCase
         $response->assertDontSee('原始邮件');
         $response->assertDontSee('提交后系统只记录挑战已处理');
         $response->assertDontSee('明文密码');
+    }
+
+    public function testShowDisplaysShortArtifactNames(): void
+    {
+        $task = BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'wechat',
+            'profile_id'  => 'wechat-pay-statement',
+            'status'      => 'parsed',
+            'received_at' => Carbon::parse('2026-06-15 19:14:00', 'Asia/Shanghai'),
+            'summary'     => '微信支付账单流水',
+        ]);
+        BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => '微信支付账单流水文件(20260515-20260615)——【解压密码可在微信支付公众号查看】.zip',
+            'path'         => 'bill-inbox/1/remote/wechat-long.zip',
+            'checksum'     => 'wechat-zip-checksum',
+            'encrypted'    => true,
+            'metadata'     => ['source' => 'remote_download'],
+        ]);
+        BillArtifact::query()->create([
+            'bill_task_id'             => $task->id,
+            'derived_from_artifact_id' => 1,
+            'kind'                     => 'xlsx',
+            'filename'                 => '微信支付账单流水文件(20260515-20260615)——【解压密码可在微信支付公众号查看】.xlsx',
+            'path'                     => 'bill-inbox/1/derived/wechat-long.xlsx',
+            'checksum'                 => 'wechat-xlsx-checksum',
+            'encrypted'                => false,
+            'metadata'                 => ['source' => 'wechat_zip_extract'],
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.show', [$task->id]));
+
+        $response->assertStatus(200);
+        $response->assertSee('原始压缩包');
+        $response->assertSee('账单明细');
+        $response->assertDontSee('微信支付账单流水文件(20260515-20260615)——【解压密码可在微信支付公众号查看】');
     }
 
     public function testShowDisplaysStatementRowsAndSavesEdits(): void
@@ -273,11 +331,11 @@ final class BillInboxControllerTest extends TestCase
         $response = $this->actingAs($this->user)->get(route('bill-inbox.settings'));
 
         $response->assertStatus(200);
-        $response->assertSee('普通 Gmail 账号');
         $response->assertSee('Gmail 地址');
         $response->assertSee('应用密码');
         $response->assertSee('内置渠道');
         $response->assertSee('支付宝交易流水');
+        $response->assertSee('微信支付账单流水');
         $response->assertSee('Gmail');
         $response->assertSee('高级设置');
         $response->assertDontSee('只处理这些邮件');
@@ -307,7 +365,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('ssl', Preferences::get('bill_inbox_mailbox_encryption')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(1, $rules);
+        $this->assertCount(2, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -316,6 +374,13 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame(['支付宝', '交易流水'], $rules[0]['keywords']);
         $this->assertTrue($rules[0]['built_in']);
         $this->assertTrue($rules[0]['enabled']);
+        $this->assertSame('微信支付账单流水', $rules[1]['name']);
+        $this->assertSame('wechat', $rules[1]['source']);
+        $this->assertSame('wechatpay@tencent.com', $rules[1]['from_contains']);
+        $this->assertSame('微信支付账单流水文件', $rules[1]['subject_contains']);
+        $this->assertSame(['微信支付', '账单流水'], $rules[1]['keywords']);
+        $this->assertTrue($rules[1]['built_in']);
+        $this->assertTrue($rules[1]['enabled']);
         $this->assertSame('', Preferences::get('bill_inbox_quick_gmail_label')->data);
         $this->assertSame('', Preferences::get('bill_inbox_quick_keywords')->data);
     }
@@ -488,7 +553,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('INBOX', Preferences::get('bill_inbox_mailbox_folder')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(1, $rules);
+        $this->assertCount(2, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -497,6 +562,14 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('', $rules[0]['gmail_label']);
         $this->assertTrue($rules[0]['built_in']);
         $this->assertTrue($rules[0]['enabled']);
+        $this->assertSame('微信支付账单流水', $rules[1]['name']);
+        $this->assertSame('wechat', $rules[1]['source']);
+        $this->assertSame('wechatpay@tencent.com', $rules[1]['from_contains']);
+        $this->assertSame('微信支付账单流水文件', $rules[1]['subject_contains']);
+        $this->assertSame(['zip'], $rules[1]['attachment_extensions']);
+        $this->assertSame('', $rules[1]['gmail_label']);
+        $this->assertTrue($rules[1]['built_in']);
+        $this->assertTrue($rules[1]['enabled']);
     }
 
     private function alipayRawMessage(): string
@@ -710,6 +783,11 @@ final class FakeBillInboxImapMessage
 
 final class FakeBillInboxImapClient implements ImapBillMailboxClient
 {
+    public bool $connected = false;
+
+    /** @var array<int,string> */
+    public array $searches = [];
+
     /** @var array<int, FakeBillInboxImapMessage> */
     private array $messages;
 
@@ -726,9 +804,15 @@ final class FakeBillInboxImapClient implements ImapBillMailboxClient
         $this->missingFolders = $missingFolders;
     }
 
-    public function close(): void {}
+    public function close(): void
+    {
+        $this->connected = false;
+    }
 
-    public function connect(BillMailboxConfig $config): void {}
+    public function connect(BillMailboxConfig $config): void
+    {
+        $this->connected = true;
+    }
 
     public function fetchRawMessage(string $uid): string
     {
@@ -745,6 +829,8 @@ final class FakeBillInboxImapClient implements ImapBillMailboxClient
 
     public function search(string $criteria, int $limit): array
     {
+        $this->searches[] = $criteria;
+
         return array_slice(array_map(static fn (FakeBillInboxImapMessage $message): string => $message->uid, $this->messages), 0, $limit);
     }
 

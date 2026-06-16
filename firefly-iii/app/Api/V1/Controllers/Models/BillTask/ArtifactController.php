@@ -18,6 +18,11 @@ final class ArtifactController extends Controller
             throw new NotFoundHttpException();
         }
 
-        return Storage::disk('local')->download($billArtifact->path, $billArtifact->filename ?? basename($billArtifact->path));
+        return response()->streamDownload(
+            static function () use ($billArtifact): void {
+                echo Storage::disk('local')->get((string) $billArtifact->path);
+            },
+            $billArtifact->filename ?? basename($billArtifact->path)
+        );
     }
 }

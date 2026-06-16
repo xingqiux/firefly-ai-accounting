@@ -45,23 +45,6 @@ class IndexController extends Controller
 
     public function index(Request $request): Factory|View
     {
-        $autoSync = null;
-        if ($this->mailboxStatus()['enabled']) {
-            try {
-                $result    = $this->mailboxSyncService->syncForUser(auth()->user(), 25);
-                $processed = $this->taskProcessor->processBatch(25);
-                $autoSync  = [
-                    'created'    => $result->created,
-                    'duplicates' => $result->duplicates,
-                    'failed'     => $result->failed,
-                    'processed'  => $processed->processed,
-                    'errors'     => $result->errors,
-                ];
-            } catch (RuntimeException $e) {
-                $autoSync = ['errors' => [$e->getMessage()]];
-            }
-        }
-
         $status = (string) $request->query('status', '');
         $query  = BillTask::query()
             ->where('user_id', auth()->id())
@@ -92,8 +75,8 @@ class IndexController extends Controller
             'stats'         => $stats,
             'currentStatus' => $status,
             'mailboxStatus' => $this->mailboxStatus(),
-            'autoSync'      => $autoSync,
             'statusLabels'   => $this->statusLabels(),
+            'builtInChannels'=> $this->channelRegistry->settingsChannels(),
         ]);
     }
 
@@ -106,6 +89,9 @@ class IndexController extends Controller
             'mailMessage',
             'statementImports' => fn ($query) => $query->orderBy('id'),
         ]);
+        $billTask->artifacts->each(function (BillArtifact $artifact) use ($billTask): void {
+            $artifact->setAttribute('display_name', $this->artifactDisplayName($billTask, $artifact));
+        });
         $rowStatus = (string) $request->query('row_status', '');
         $rowFrom   = (string) $request->query('row_from', '');
         $rowTo     = (string) $request->query('row_to', '');
@@ -173,8 +159,8 @@ class IndexController extends Controller
         ]);
 
         try {
-            $this->actionService->submitSecret($billTask, (string) $request->string('value'));
-            session()->flash('success', '验证码/密码已提交，任务已准备处理。');
+            $processedTask = $this->actionService->submitSecret($billTask, (string) $request->string('value'));
+            session()->flash('success', $this->secretSubmittedMessage($processedTask));
         } catch (RuntimeException $e) {
             session()->flash('error', $e->getMessage());
         }
@@ -375,6 +361,32 @@ class IndexController extends Controller
         ];
     }
 
+    private function artifactDisplayName(BillTask $billTask, BillArtifact $artifact): string
+    {
+        if ('wechat' !== $billTask->source) {
+            return (string) ($artifact->filename ?? $artifact->path ?? '-');
+        }
+
+        $metadata = is_array($artifact->metadata) ? $artifact->metadata : [];
+        if ('zip' === $artifact->kind || 'remote_download' === ($metadata['source'] ?? null)) {
+            return '原始压缩包';
+        }
+        if (in_array($artifact->kind, ['csv', 'xlsx'], true) || 'wechat_zip_extract' === ($metadata['source'] ?? null)) {
+            return '账单明细';
+        }
+
+        return (string) ($artifact->filename ?? $artifact->path ?? '-');
+    }
+
+    private function secretSubmittedMessage(BillTask $billTask): string
+    {
+        return match ($billTask->status) {
+            'parsed'  => '账单已解析，已生成流水明细。',
+            'ready'   => '验证码/密码已提交，等待处理。',
+            default   => '验证码/密码已提交。',
+        };
+    }
+
     private function statusLabels(): array
     {
         return [
@@ -405,6 +417,8 @@ class IndexController extends Controller
             'task.unknown'          => '未识别',
             'task.retry_requested'  => '重新处理',
             'task.ignored'          => '已忽略',
+            'remote_file.downloaded'=> '已下载账单文件',
+            'remote_file.failed'    => '下载账单文件失败',
         ];
     }
 }
