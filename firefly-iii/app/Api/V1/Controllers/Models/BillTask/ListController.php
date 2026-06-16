@@ -21,4 +21,23 @@ final class ListController extends Controller
     {
         return response()->json($this->eventCollectionResponse($billTask->events()->orderBy('id')->get()));
     }
+
+    public function rows(BillTask $billTask): JsonResponse
+    {
+        $query  = $billTask->statementRows()->orderBy('occurred_at', 'desc')->orderBy('row_number');
+        $status = (string) request()->query('status', '');
+        $from   = (string) request()->query('from', '');
+        $to     = (string) request()->query('to', '');
+        if ('' !== $status) {
+            $query->where('status', $status);
+        }
+        if ('' !== $from) {
+            $query->where('occurred_at', '>=', $from.' 00:00:00');
+        }
+        if ('' !== $to) {
+            $query->where('occurred_at', '<=', $to.' 23:59:59');
+        }
+
+        return response()->json($this->rowCollectionResponse($query->get()));
+    }
 }

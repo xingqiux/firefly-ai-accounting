@@ -6,7 +6,7 @@
 
 {% block content %}
     <div class="row">
-        <div class="col-lg-7 col-md-12 col-sm-12 col-xs-12">
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
             <div class="box">
                 <div class="box-header with-border">
                     <h3 class="box-title">账单任务 #{{ task.id }}</h3>
@@ -20,7 +20,7 @@
                     <table class="table table-striped">
                         <tr>
                             <td style="width: 160px;">状态</td>
-                            <td><strong>{{ task.status }}</strong></td>
+                            <td><strong>{{ statusLabels[task.status]|default(task.status) }}</strong></td>
                         </tr>
                         <tr>
                             <td>来源</td>
@@ -37,31 +37,26 @@
                         {% if task.error_message %}
                             <tr>
                                 <td>错误</td>
-                                <td>
-                                    {% if task.error_code %}<strong>{{ task.error_code }}</strong><br>{% endif %}
-                                    {{ task.error_message }}
-                                </td>
+                                <td>{{ task.error_message }}</td>
                             </tr>
                         {% endif %}
                     </table>
                 </div>
                 <div class="box-footer">
-                    <form method="POST" action="{{ route('bill-inbox.retry', [task.id]) }}" style="display: inline-block;">
+                    <form method="POST" action="{{ route('bill-inbox.archive', [task.id]) }}" style="display: inline-block;">
                         <input type="hidden" name="_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-default">
-                            <span class="fa fa-refresh fa-fw"></span> 重新排队
-                        </button>
-                    </form>
-                    <form method="POST" action="{{ route('bill-inbox.ignore', [task.id]) }}" style="display: inline-block;">
-                        <input type="hidden" name="_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-warning">
-                            <span class="fa fa-ban fa-fw"></span> 忽略任务
+                            <span class="fa fa-archive fa-fw"></span> 归档
                         </button>
                     </form>
                 </div>
             </div>
+        </div>
+    </div>
 
-            {% if task.currentSecretChallenge %}
+    {% if task.currentSecretChallenge %}
+        <div class="row">
+            <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
                 <div class="box box-warning">
                     <div class="box-header with-border">
                         <h3 class="box-title">需要密码或验证码</h3>
@@ -74,7 +69,6 @@
                                 <label for="bill-secret-value">密码/验证码</label>
                                 <input id="bill-secret-value" class="form-control" type="password" name="value" autocomplete="one-time-code" required>
                             </div>
-                            <p class="text-muted">提交后系统只记录挑战已处理，不在任务表里保存明文密码。</p>
                         </div>
                         <div class="box-footer">
                             <button type="submit" class="btn btn-success">
@@ -83,57 +77,185 @@
                         </div>
                     </form>
                 </div>
-            {% endif %}
+            </div>
+        </div>
+    {% endif %}
 
+    <div class="row">
+        <div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
             <div class="box">
                 <div class="box-header with-border">
-                    <h3 class="box-title">邮件信息</h3>
+                    <h3 class="box-title">流水明细</h3>
+                    {% if statementRows.count() > 0 %}
+                        <div class="box-tools pull-right">
+                            <form method="POST" action="{{ route('bill-inbox.import', [task.id]) }}" style="display: inline-block;">
+                                <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                {% for row in statementRows %}
+                                    {% if row.status != 'imported' and row.firefly_type %}
+                                        <input type="hidden" name="row_ids[]" value="{{ row.id }}">
+                                    {% endif %}
+                                {% endfor %}
+                                <button type="submit" class="btn btn-box-tool">
+                                    <span class="fa fa-upload fa-fw"></span> 全部存入
+                                </button>
+                            </form>
+                            <button type="submit" form="bill-row-batch-import" class="btn btn-box-tool">
+                                <span class="fa fa-check-square-o fa-fw"></span> 批量存入
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+                <div class="box-body">
+                    <form method="GET" action="{{ route('bill-inbox.show', [task.id]) }}" class="form-inline">
+                        <div class="form-group">
+                            <label for="bill-row-status">状态</label>
+                            <select id="bill-row-status" class="form-control input-sm" name="row_status">
+                                <option value="">全部</option>
+                                <option value="pending" {% if rowFilters.status == 'pending' %}selected{% endif %}>待存入</option>
+                                <option value="imported" {% if rowFilters.status == 'imported' %}selected{% endif %}>已存入</option>
+                                <option value="failed" {% if rowFilters.status == 'failed' %}selected{% endif %}>处理失败</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="bill-row-from">开始</label>
+                            <input id="bill-row-from" class="form-control input-sm" name="row_from" value="{{ rowFilters.from }}" placeholder="YYYY-MM-DD">
+                        </div>
+                        <div class="form-group">
+                            <label for="bill-row-to">结束</label>
+                            <input id="bill-row-to" class="form-control input-sm" name="row_to" value="{{ rowFilters.to }}" placeholder="YYYY-MM-DD">
+                        </div>
+                        <button type="submit" class="btn btn-default btn-sm">
+                            <span class="fa fa-filter fa-fw"></span> 筛选
+                        </button>
+                    </form>
                 </div>
                 <div class="box-body no-padding">
-                    {% if task.mailMessage %}
-                        <table class="table table-striped">
-                            <tr><td style="width: 160px;">邮箱</td><td>{{ task.mailMessage.mailbox|default('-') }}</td></tr>
-                            <tr><td>发件人</td><td>{{ task.mailMessage.from_address|default('-') }}</td></tr>
-                            <tr><td>收件人</td><td>{{ task.mailMessage.to_address|default('-') }}</td></tr>
-                            <tr><td>主题</td><td>{{ task.mailMessage.subject|default('-') }}</td></tr>
-                            <tr><td>Message-ID</td><td>{{ task.mailMessage.message_id|default('-') }}</td></tr>
-                            <tr><td>原始邮件</td><td>{{ task.mailMessage.raw_path|default('-') }}</td></tr>
-                        </table>
+                    {% if statementRows.count() == 0 %}
+                        <p class="text-muted" style="padding: 15px;">暂无流水明细。</p>
                     {% else %}
-                        <p class="text-muted" style="padding: 15px;">这个任务没有关联邮件记录。</p>
+                        <form id="bill-row-batch-import" method="POST" action="{{ route('bill-inbox.import', [task.id]) }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                        </form>
+                        <div class="table-responsive">
+                            <table class="table table-hover table-striped">
+                                <thead>
+                                <tr>
+                                    <th style="width: 36px;"></th>
+                                    <th>时间</th>
+                                    <th>分类</th>
+                                    <th>交易对方</th>
+                                    <th>说明</th>
+                                    <th>收/支</th>
+                                    <th>金额</th>
+                                    <th>付款方式</th>
+                                    <th>状态</th>
+                                    <th style="width: 150px;">操作</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {% for row in statementRows %}
+                                    <tr>
+                                        <td>
+                                            {% if row.status != 'imported' and row.firefly_type %}
+                                                <input form="bill-row-batch-import" type="checkbox" name="row_ids[]" value="{{ row.id }}">
+                                            {% endif %}
+                                        </td>
+                                        <td>{% if row.occurred_at %}{{ row.occurred_at.format('Y-m-d H:i') }}{% else %}-{% endif %}</td>
+                                        <td>{{ row.platform_category|default('-') }}</td>
+                                        <td>{{ row.counterparty|default('-') }}</td>
+                                        <td>{{ row.description|default('-') }}</td>
+                                        <td>{{ row.direction|default('-') }}</td>
+                                        <td>{{ row.amount|default('-') }}</td>
+                                        <td>{{ row.payment_method|default('-') }}</td>
+                                        <td>{{ statusLabels[row.status]|default(row.status) }}</td>
+                                        <td>
+                                            <a class="btn btn-xs btn-default" data-toggle="collapse" href="#bill-row-{{ row.id }}">
+                                                <span class="fa fa-pencil fa-fw"></span> 编辑
+                                            </a>
+                                            {% if row.status != 'imported' and row.firefly_type %}
+                                                <form method="POST" action="{{ route('bill-inbox.import', [task.id]) }}" style="display: inline-block;">
+                                                    <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                                    <input type="hidden" name="row_ids[]" value="{{ row.id }}">
+                                                    <button class="btn btn-xs btn-success" type="submit">
+                                                        <span class="fa fa-upload fa-fw"></span> 存入
+                                                    </button>
+                                                </form>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    <tr id="bill-row-{{ row.id }}" class="collapse">
+                                        <td colspan="10">
+                                            <form method="POST" action="{{ route('bill-inbox.row.update', [row.id]) }}" class="form-horizontal">
+                                                <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                                <div class="row">
+                                                    <div class="col-sm-3"><label>交易时间</label><input class="form-control" name="occurred_at" value="{% if row.occurred_at %}{{ row.occurred_at.format('Y-m-d H:i:s') }}{% endif %}"></div>
+                                                    <div class="col-sm-3"><label>分类</label><input class="form-control" name="platform_category" value="{{ row.platform_category }}"></div>
+                                                    <div class="col-sm-3"><label>交易对方</label><input class="form-control" name="counterparty" value="{{ row.counterparty }}"></div>
+                                                    <div class="col-sm-3"><label>金额</label><input class="form-control" name="amount" value="{{ row.amount }}"></div>
+                                                </div>
+                                                <div class="row" style="margin-top: 10px;">
+                                                    <div class="col-sm-3"><label>收/支</label><input class="form-control" name="direction" value="{{ row.direction }}"></div>
+                                                    <div class="col-sm-3"><label>付款方式</label><input class="form-control" name="payment_method" value="{{ row.payment_method }}"></div>
+                                                    <div class="col-sm-3"><label>交易状态</label><input class="form-control" name="transaction_status" value="{{ row.transaction_status }}"></div>
+                                                    <div class="col-sm-3"><label>Firefly 类型</label><input class="form-control" name="firefly_type" value="{{ row.firefly_type }}"></div>
+                                                </div>
+                                                <div class="row" style="margin-top: 10px;">
+                                                    <div class="col-sm-3"><label>来源账户</label><input class="form-control" name="source_name" value="{{ row.source_name }}"></div>
+                                                    <div class="col-sm-3"><label>目标账户</label><input class="form-control" name="destination_name" value="{{ row.destination_name }}"></div>
+                                                    <div class="col-sm-3"><label>Firefly 金额</label><input class="form-control" name="firefly_amount" value="{{ row.firefly_amount }}"></div>
+                                                    <div class="col-sm-3"><label>Firefly 时间</label><input class="form-control" name="firefly_date" value="{% if row.firefly_date %}{{ row.firefly_date.format('Y-m-d H:i:s') }}{% endif %}"></div>
+                                                </div>
+                                                <div class="row" style="margin-top: 10px;">
+                                                    <div class="col-sm-4"><label>Firefly 描述</label><input class="form-control" name="firefly_description" value="{{ row.firefly_description }}"></div>
+                                                    <div class="col-sm-4"><label>Firefly 分类</label><input class="form-control" name="category_name" value="{{ row.category_name }}"></div>
+                                                    <div class="col-sm-4"><label>备注</label><input class="form-control" name="notes" value="{{ row.notes }}"></div>
+                                                </div>
+                                                <div style="margin-top: 10px;">
+                                                    <button type="submit" class="btn btn-success btn-sm">
+                                                        <span class="fa fa-save fa-fw"></span> 保存
+                                                    </button>
+                                                </div>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     {% endif %}
                 </div>
             </div>
         </div>
+    </div>
 
-        <div class="col-lg-5 col-md-12 col-sm-12 col-xs-12">
+    <div class="row">
+        <div class="col-lg-6 col-md-12 col-sm-12 col-xs-12">
             <div class="box">
                 <div class="box-header with-border">
-                    <h3 class="box-title">产物/附件</h3>
+                    <h3 class="box-title">附件</h3>
                 </div>
                 <div class="box-body no-padding">
                     {% if task.artifacts.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无产物。</p>
+                        <p class="text-muted" style="padding: 15px;">暂无附件。</p>
                     {% else %}
                         <table class="table table-striped">
                             <thead>
                             <tr>
                                 <th>类型</th>
                                 <th>文件</th>
-                                <th>加密</th>
+                                <th style="width: 90px;">操作</th>
                             </tr>
                             </thead>
                             <tbody>
                             {% for artifact in task.artifacts %}
                                 <tr>
                                     <td>{{ artifact.kind }}</td>
+                                    <td>{{ artifact.filename|default(artifact.path|default('-')) }}</td>
                                     <td>
-                                        {{ artifact.filename|default(artifact.path|default('-')) }}
-                                        {% if artifact.path and artifact.filename %}
-                                            <br><small class="text-muted">{{ artifact.path }}</small>
-                                        {% endif %}
+                                        <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.artifact.download', [artifact.id]) }}">
+                                            <span class="fa fa-download fa-fw"></span> 下载
+                                        </a>
                                     </td>
-                                    <td>{% if artifact.encrypted %}<span class="label label-warning">是</span>{% else %}<span class="label label-default">否</span>{% endif %}</td>
                                 </tr>
                             {% endfor %}
                             </tbody>
@@ -144,17 +266,37 @@
 
             <div class="box">
                 <div class="box-header with-border">
-                    <h3 class="box-title">事件日志</h3>
+                    <h3 class="box-title">邮件信息</h3>
+                </div>
+                <div class="box-body no-padding">
+                    {% if task.mailMessage %}
+                        <table class="table table-striped">
+                            <tr><td style="width: 120px;">邮箱</td><td>{{ task.mailMessage.mailbox|default('-') }}</td></tr>
+                            <tr><td>发件人</td><td>{{ task.mailMessage.from_address|default('-') }}</td></tr>
+                            <tr><td>主题</td><td>{{ task.mailMessage.subject|default('-') }}</td></tr>
+                            <tr><td>收到时间</td><td>{% if task.mailMessage.received_at %}{{ task.mailMessage.received_at.format('Y-m-d H:i') }}{% else %}-{% endif %}</td></tr>
+                        </table>
+                    {% else %}
+                        <p class="text-muted" style="padding: 15px;">这个任务没有关联邮件记录。</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 col-md-12 col-sm-12 col-xs-12">
+            <div class="box">
+                <div class="box-header with-border">
+                    <h3 class="box-title">处理记录</h3>
                 </div>
                 <div class="box-body no-padding">
                     {% if task.events.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无事件。</p>
+                        <p class="text-muted" style="padding: 15px;">暂无处理记录。</p>
                     {% else %}
                         <table class="table table-striped">
                             <thead>
                             <tr>
                                 <th>时间</th>
-                                <th>事件</th>
+                                <th>记录</th>
                                 <th>说明</th>
                             </tr>
                             </thead>
@@ -162,7 +304,7 @@
                             {% for event in task.events %}
                                 <tr>
                                     <td>{% if event.created_at %}{{ event.created_at.format('Y-m-d H:i') }}{% else %}-{% endif %}</td>
-                                    <td>{{ event.event_type }}</td>
+                                    <td>{{ eventLabels[event.event_type]|default(event.event_type) }}</td>
                                     <td>{{ event.message|default('-') }}</td>
                                 </tr>
                             {% endfor %}

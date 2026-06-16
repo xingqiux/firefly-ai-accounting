@@ -11,21 +11,12 @@
                 <div class="box-header with-border">
                     <h3 class="box-title">账单收件箱</h3>
                     <div class="box-tools pull-right">
-                        <form method="POST" action="{{ route('bill-inbox.sync') }}" style="display: inline-block;">
-                            <input type="hidden" name="_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-box-tool">
-                                <span class="fa fa-refresh fa-fw"></span> 立即同步
-                            </button>
-                        </form>
                         <a class="btn btn-box-tool" href="{{ route('bill-inbox.settings') }}">
                             <span class="fa fa-cog fa-fw"></span> 邮箱配置
                         </a>
                     </div>
                 </div>
                 <div class="box-body">
-                    <p class="text-muted">
-                        这里显示普通邮箱中命中处理规则后生成的账单任务。任务状态、附件、事件日志和验证码/密码挑战都保存在 Firefly III 后端。
-                    </p>
                     <div class="well well-sm" style="margin-bottom: 15px;">
                         <strong>邮箱配置状态</strong>
                         {% if mailboxStatus.enabled %}
@@ -39,16 +30,12 @@
                                 {{ mailboxStatus.email|default('未配置') }}
                             </div>
                             <div class="col-sm-3">
-                                <small class="text-muted">处理范围</small><br>
-                                {% if mailboxStatus.gmail_label %}
-                                    {{ mailboxStatus.gmail_label }}
-                                {% else %}
-                                    未设置标签
-                                {% endif %}
+                                <small class="text-muted">同步文件夹</small><br>
+                                {{ mailboxStatus.folder|default('INBOX') }}
                             </div>
                             <div class="col-sm-3">
-                                <small class="text-muted">关键词</small><br>
-                                {{ mailboxStatus.keywords|default('未设置') }}
+                                <small class="text-muted">内置渠道</small><br>
+                                支付宝交易流水
                             </div>
                             <div class="col-sm-3">
                                 <small class="text-muted">凭据</small><br>
@@ -64,48 +51,58 @@
                                 邮箱配置已保存，但同步开关未启用。进入邮箱配置页勾选“启用账单邮箱同步”后，后续同步 worker 才会处理邮件。
                             </p>
                         {% endif %}
+                        {% if autoSync and autoSync.errors is defined and autoSync.errors|length > 0 %}
+                            <p class="text-danger" style="margin: 10px 0 0;">自动同步失败：{{ autoSync.errors|join(' ') }}</p>
+                        {% elseif autoSync %}
+                            <p class="text-muted" style="margin: 10px 0 0;">自动同步：新增 {{ autoSync.created }}，重复 {{ autoSync.duplicates }}，推进 {{ autoSync.processed }}。</p>
+                        {% endif %}
                     </div>
                     <div class="btn-group" role="group">
                         <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
                         {% for status, total in stats %}
                             <a class="btn btn-default {% if currentStatus == status %}active{% endif %}" href="{{ route('bill-inbox.index', {status: status}) }}">
-                                {{ status }} <span class="badge">{{ total }}</span>
+                                {{ statusLabels[status]|default(status) }} <span class="badge">{{ total }}</span>
                             </a>
                         {% endfor %}
                     </div>
                 </div>
                 <div class="box-body no-padding">
                     {% if tasks.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱和处理规则后，命中的账单邮件会显示在这里。</p>
+                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱后，支付宝交易流水邮件会显示在这里。</p>
                     {% else %}
-                        <div class="table-responsive">
+                        <form method="POST" action="{{ route('bill-inbox.archive-many') }}">
+                            <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                            <div class="table-responsive">
                             <table class="table table-hover table-striped">
                                 <thead>
                                 <tr>
+                                    <th style="width: 36px;"></th>
                                     <th style="width: 80px;">ID</th>
                                     <th>状态</th>
                                     <th>来源</th>
                                     <th>邮件/摘要</th>
+                                    <th>流水</th>
                                     <th>收到时间</th>
                                     <th>下一步</th>
-                                    <th style="width: 100px;">操作</th>
+                                    <th style="width: 150px;">操作</th>
                                 </tr>
                                 </thead>
                                 <tbody>
                                 {% for task in tasks %}
                                     <tr>
+                                        <td><input type="checkbox" name="task_ids[]" value="{{ task.id }}"></td>
                                         <td>#{{ task.id }}</td>
                                         <td>
                                             {% if task.status == 'needs_secret' %}
-                                                <span class="label label-warning">{{ task.status }}</span>
+                                                <span class="label label-warning">{{ statusLabels[task.status]|default(task.status) }}</span>
                                             {% elseif task.status == 'failed' or task.status == 'unknown' %}
-                                                <span class="label label-danger">{{ task.status }}</span>
+                                                <span class="label label-danger">{{ statusLabels[task.status]|default(task.status) }}</span>
                                             {% elseif task.status == 'imported' or task.status == 'ready' %}
-                                                <span class="label label-success">{{ task.status }}</span>
+                                                <span class="label label-success">{{ statusLabels[task.status]|default(task.status) }}</span>
                                             {% elseif task.status == 'ignored' %}
-                                                <span class="label label-default">{{ task.status }}</span>
+                                                <span class="label label-default">{{ statusLabels[task.status]|default(task.status) }}</span>
                                             {% else %}
-                                                <span class="label label-info">{{ task.status }}</span>
+                                                <span class="label label-info">{{ statusLabels[task.status]|default(task.status) }}</span>
                                             {% endif %}
                                         </td>
                                         <td>{{ task.source }}{% if task.profile_id %}<br><small class="text-muted">{{ task.profile_id }}</small>{% endif %}</td>
@@ -115,6 +112,7 @@
                                                 <br><small class="text-muted">{{ task.mailMessage.from_address }} → {{ task.mailMessage.to_address }}</small>
                                             {% endif %}
                                         </td>
+                                        <td>{{ task.statementRows.count() }}</td>
                                         <td>
                                             {% if task.received_at %}
                                                 {{ task.received_at.format('Y-m-d H:i') }}
@@ -135,12 +133,21 @@
                                             <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.show', [task.id]) }}">
                                                 <span class="fa fa-search fa-fw"></span> 查看
                                             </a>
+                                            <button class="btn btn-xs btn-default" type="submit" name="task_ids[]" value="{{ task.id }}">
+                                                <span class="fa fa-archive fa-fw"></span> 归档
+                                            </button>
                                         </td>
                                     </tr>
                                 {% endfor %}
                                 </tbody>
                             </table>
-                        </div>
+                            </div>
+                            <div style="padding: 10px 15px;">
+                                <button type="submit" class="btn btn-default btn-sm">
+                                    <span class="fa fa-archive fa-fw"></span> 批量归档
+                                </button>
+                            </div>
+                        </form>
                     {% endif %}
                 </div>
                 {% if tasks.count() > 0 %}

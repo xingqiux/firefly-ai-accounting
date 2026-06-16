@@ -6,11 +6,17 @@ namespace FireflyIII\Services\BillIngestion;
 
 use Carbon\Carbon;
 use FireflyIII\Models\BillTask;
+use FireflyIII\User;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class BillTaskActionService
 {
+    public function __construct(
+        private readonly BillTaskProcessor $taskProcessor,
+        private readonly BillSourceChannelRegistry $channelRegistry,
+    ) {}
+
     public function ignore(BillTask $billTask): BillTask
     {
         $billTask->status                      = 'ignored';
@@ -24,6 +30,40 @@ class BillTaskActionService
         return $billTask->refresh();
     }
 
+    public function archive(BillTask $billTask): BillTask
+    {
+        $metadata                      = is_array($billTask->metadata) ? $billTask->metadata : [];
+        $metadata['archived_by_user']   = true;
+        $metadata['archived_at']        = Carbon::now()->toAtomString();
+        $billTask->status              = 'cleaned';
+        $billTask->error_code          = null;
+        $billTask->error_message       = null;
+        $billTask->metadata            = $metadata;
+        $billTask->save();
+
+        $this->appendEvent($billTask, 'task.archived', '账单任务已归档');
+
+        return $billTask->refresh();
+    }
+
+    /**
+     * @param array<int,int> $taskIds
+     */
+    public function archiveMany(User $user, array $taskIds): int
+    {
+        $tasks = BillTask::query()
+            ->where('user_id', $user->id)
+            ->whereIn('id', $taskIds)
+            ->get()
+        ;
+
+        foreach ($tasks as $task) {
+            $this->archive($task);
+        }
+
+        return $tasks->count();
+    }
+
     public function retry(BillTask $billTask): BillTask
     {
         $billTask->status        = 'received';
@@ -34,6 +74,21 @@ class BillTaskActionService
         $this->appendEvent($billTask, 'task.retry_requested', '任务已重新排队');
 
         return $billTask->refresh();
+    }
+
+    public function cleanupStale(User $user): int
+    {
+        $tasks = BillTask::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'needs_secret')
+            ->get()
+        ;
+
+        foreach ($tasks as $task) {
+            $this->archive($task);
+        }
+
+        return $tasks->count();
     }
 
     public function submitSecret(BillTask $billTask, string $secret): BillTask
@@ -63,7 +118,20 @@ class BillTaskActionService
             $this->appendEvent($billTask, 'challenge.consumed', '验证码/密码已提交');
         });
 
+        if ($this->shouldProcessAfterSecret($billTask) && false === $this->taskProcessor->process($billTask, $secret)) {
+            $billTask->refresh();
+
+            throw new RuntimeException($billTask->error_message ?? '账单处理失败。');
+        }
+
         return $billTask->refresh();
+    }
+
+    private function shouldProcessAfterSecret(BillTask $billTask): bool
+    {
+        return true === $this->channelRegistry
+            ->find($billTask->source, $billTask->profile_id)
+            ?->shouldProcessAfterSecret($billTask);
     }
 
     private function appendEvent(BillTask $billTask, string $eventType, string $message): void

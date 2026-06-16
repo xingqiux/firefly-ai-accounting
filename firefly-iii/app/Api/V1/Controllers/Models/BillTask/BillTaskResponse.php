@@ -7,6 +7,8 @@ namespace FireflyIII\Api\V1\Controllers\Models\BillTask;
 use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillMailMessage;
 use FireflyIII\Models\BillSecretChallenge;
+use FireflyIII\Models\BillStatementImport;
+use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Models\BillTaskEvent;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -53,6 +55,9 @@ trait BillTaskResponse
             foreach ($task->artifacts as $artifact) {
                 $included[] = $this->artifactResource($artifact);
             }
+            foreach ($task->statementImports as $import) {
+                $included[] = $this->statementImportResource($import);
+            }
             if ($currentChallenge instanceof BillSecretChallenge) {
                 $included[] = $this->secretChallengeResource($currentChallenge);
             }
@@ -82,6 +87,16 @@ trait BillTaskResponse
     {
         return [
             'data' => $events->map(fn (BillTaskEvent $event): array => $this->eventResource($event))->values()->all(),
+        ];
+    }
+
+    /**
+     * @param EloquentCollection<int, BillStatementRow> $rows
+     */
+    protected function rowCollectionResponse(EloquentCollection $rows): array
+    {
+        return [
+            'data' => $rows->map(fn (BillStatementRow $row): array => $this->statementRowResource($row))->values()->all(),
         ];
     }
 
@@ -155,6 +170,7 @@ trait BillTaskResponse
                 'encrypted'                => $artifact->encrypted,
                 'derived_from_artifact_id' => null === $artifact->derived_from_artifact_id ? null : (string) $artifact->derived_from_artifact_id,
                 'metadata'                 => $artifact->metadata,
+                'download_url'             => route('api.v1.bill-artifacts.download', [$artifact->id]),
                 'created_at'               => optional($artifact->created_at)->toAtomString(),
             ],
         ];
@@ -188,6 +204,68 @@ trait BillTaskResponse
                 'message'      => $event->message,
                 'metadata'     => $event->metadata,
                 'created_at'   => optional($event->created_at)->toAtomString(),
+            ],
+        ];
+    }
+
+    protected function statementImportResource(BillStatementImport $import): array
+    {
+        return [
+            'type'       => 'bill-statement-imports',
+            'id'         => (string) $import->id,
+            'attributes' => [
+                'bill_task_id'      => (string) $import->bill_task_id,
+                'bill_artifact_id'  => (string) $import->bill_artifact_id,
+                'source'            => $import->source,
+                'profile_id'        => $import->profile_id,
+                'archived_filename' => $import->archived_filename,
+                'exported_at'       => optional($import->exported_at)->toAtomString(),
+                'period_start'      => optional($import->period_start)->toDateString(),
+                'period_end'        => optional($import->period_end)->toDateString(),
+                'row_count'         => $import->row_count,
+                'status'            => $import->status,
+                'metadata'          => $import->metadata,
+            ],
+        ];
+    }
+
+    protected function statementRowResource(BillStatementRow $row): array
+    {
+        return [
+            'type'       => 'bill-statement-rows',
+            'id'         => (string) $row->id,
+            'attributes' => [
+                'bill_task_id'             => (string) $row->bill_task_id,
+                'bill_statement_import_id' => (string) $row->bill_statement_import_id,
+                'row_number'               => $row->row_number,
+                'status'                   => $row->status,
+                'occurred_at'              => optional($row->occurred_at)->toAtomString(),
+                'platform_category'        => $row->platform_category,
+                'counterparty'             => $row->counterparty,
+                'counterparty_account'     => $row->counterparty_account,
+                'description'              => $row->description,
+                'direction'                => $row->direction,
+                'amount'                   => null === $row->amount ? null : (string) $row->amount,
+                'payment_method'           => $row->payment_method,
+                'transaction_status'       => $row->transaction_status,
+                'platform_order_no'        => $row->platform_order_no,
+                'merchant_order_no'        => $row->merchant_order_no,
+                'remark'                   => $row->remark,
+                'editable_data'            => $row->editable_data,
+                'firefly_type'             => $row->firefly_type,
+                'firefly_date'             => optional($row->firefly_date)->toAtomString(),
+                'firefly_amount'           => null === $row->firefly_amount ? null : (string) $row->firefly_amount,
+                'firefly_description'      => $row->firefly_description,
+                'source_name'              => $row->source_name,
+                'destination_name'         => $row->destination_name,
+                'category_name'            => $row->category_name,
+                'notes'                    => $row->notes,
+                'tags'                     => $row->tags,
+                'transaction_group_id'     => null === $row->transaction_group_id ? null : (string) $row->transaction_group_id,
+                'error_message'            => $row->error_message,
+                'metadata'                 => $row->metadata,
+                'created_at'               => optional($row->created_at)->toAtomString(),
+                'updated_at'               => optional($row->updated_at)->toAtomString(),
             ],
         ];
     }

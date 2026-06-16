@@ -16,6 +16,7 @@ class BillMailboxSyncService
     public function __construct(
         private readonly ImapBillMailboxClient $client,
         private readonly BillMailIngestionService $ingestionService,
+        private readonly BillSourceChannelRegistry $channelRegistry,
     ) {}
 
     public function syncForUser(User $user, int $limit = 25): BillMailboxSyncResult
@@ -33,8 +34,16 @@ class BillMailboxSyncService
             $this->client->connect($config);
 
             foreach ($this->folders($config) as $folder) {
-                $this->client->selectFolder($folder);
-                foreach ($this->searchCriteria($config) as $criteria) {
+                try {
+                    $this->client->selectFolder($folder);
+                } catch (\Throwable $e) {
+                    ++$result->failed;
+                    $result->addError($this->folderErrorMessage($folder, $e));
+
+                    continue;
+                }
+
+                foreach ($this->searchCriteria() as $criteria) {
                     foreach ($this->client->search($criteria, $limit) as $uid) {
                         $uids[$uid] = $uid;
                         if (count($uids) >= $limit) {
@@ -67,6 +76,9 @@ class BillMailboxSyncService
                     ++$result->failed;
                 }
             }
+        } catch (\Throwable $e) {
+            ++$result->failed;
+            $result->addError(sprintf('邮箱同步失败：%s', $e->getMessage()));
         } finally {
             $this->client->close();
         }
@@ -93,31 +105,23 @@ class BillMailboxSyncService
         );
     }
 
-    private function defaultAlipayCriteria(): string
-    {
-        return 'FROM "service@mail.alipay.com"';
-    }
-
     /**
      * @return array<int, string>
      */
     private function folders(BillMailboxConfig $config): array
     {
-        $folders = [];
-        if ('' !== trim($config->gmailLabel)) {
-            $folders[] = trim($config->gmailLabel);
-        }
-        foreach ($config->rules as $rule) {
-            $label = trim((string) ($rule['gmail_label'] ?? ''));
-            if ('' !== $label) {
-                $folders[] = $label;
-            }
-        }
-        if ([] === $folders) {
-            $folders[] = $config->folder;
+        $folder = trim($config->folder);
+
+        return ['' === $folder ? 'INBOX' : $folder];
+    }
+
+    private function folderErrorMessage(string $folder, \Throwable $exception): string
+    {
+        if (str_contains($exception->getMessage(), 'NONEXISTENT') || str_contains($exception->getMessage(), 'Unknown Mailbox')) {
+            return sprintf('邮箱文件夹不存在：%s。请在邮箱配置里改成已有文件夹，或留空使用 INBOX。', $folder);
         }
 
-        return array_values(array_unique($folders));
+        return sprintf('无法打开邮箱文件夹 %s：%s', $folder, $exception->getMessage());
     }
 
     private function isDuplicate(User $user, string $uid, string $raw): bool
@@ -155,35 +159,9 @@ class BillMailboxSyncService
     /**
      * @return array<int, string>
      */
-    private function searchCriteria(BillMailboxConfig $config): array
+    private function searchCriteria(): array
     {
-        $criteria = [];
-        foreach ($config->rules as $rule) {
-            if (false === filter_var($rule['enabled'] ?? true, FILTER_VALIDATE_BOOL)) {
-                continue;
-            }
-
-            $from    = trim((string) ($rule['from_contains'] ?? ''));
-            $subject = trim((string) ($rule['subject_contains'] ?? ''));
-            if ('' === $from && '' === $subject) {
-                continue;
-            }
-
-            $parts = [];
-            if ('' !== $from) {
-                $parts[] = sprintf('FROM "%s"', str_replace('"', '', $from));
-            }
-            if ('' !== $subject && mb_check_encoding($subject, 'ASCII')) {
-                $parts[] = sprintf('SUBJECT "%s"', str_replace('"', '', $subject));
-            }
-            $criteria[] = implode(' ', $parts);
-        }
-
-        if ([] === $criteria) {
-            $criteria[] = $this->defaultAlipayCriteria();
-        }
-
-        return array_values(array_unique($criteria));
+        return $this->channelRegistry->mailboxSearchCriteria();
     }
 
     private function storeMessage(User $user, BillMailboxConfig $config, string $uid, string $raw): ?BillTask

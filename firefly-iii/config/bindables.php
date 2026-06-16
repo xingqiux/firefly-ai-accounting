@@ -26,6 +26,8 @@ use FireflyIII\Models\Account;
 use FireflyIII\Models\Attachment;
 use FireflyIII\Models\AvailableBudget;
 use FireflyIII\Models\Bill;
+use FireflyIII\Models\BillArtifact;
+use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Models\Budget;
 use FireflyIII\Models\BudgetLimit;
@@ -72,6 +74,8 @@ return [
         'attachment'                => Attachment::class,
         'availableBudget'           => AvailableBudget::class,
         'bill'                      => Bill::class,
+        'billArtifact'              => BillArtifact::class,
+        'billStatementRow'          => BillStatementRow::class,
         'billTask'                  => BillTask::class,
         'budget'                    => Budget::class,
         'budgetLimit'               => BudgetLimit::class,

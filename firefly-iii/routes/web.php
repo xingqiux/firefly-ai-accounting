@@ -1393,10 +1393,16 @@ Route::group(
     static function (): void {
         Route::get('', ['uses' => 'IndexController@index', 'as' => 'index']);
         Route::post('sync', ['uses' => 'IndexController@postSync', 'as' => 'sync']);
+        Route::post('cleanup-stale', ['uses' => 'IndexController@postCleanupStale', 'as' => 'cleanup-stale']);
+        Route::post('archive', ['uses' => 'IndexController@postArchiveMany', 'as' => 'archive-many']);
         Route::get('settings', ['uses' => 'IndexController@settings', 'as' => 'settings']);
         Route::post('settings', ['uses' => 'IndexController@postSettings', 'as' => 'settings.post']);
+        Route::get('artifacts/{billArtifact}/download', ['uses' => 'IndexController@download', 'as' => 'artifact.download']);
+        Route::post('rows/{billStatementRow}', ['uses' => 'IndexController@postUpdateRow', 'as' => 'row.update']);
         Route::get('{billTask}', ['uses' => 'IndexController@show', 'as' => 'show']);
         Route::post('{billTask}/secret', ['uses' => 'IndexController@postSecret', 'as' => 'secret']);
+        Route::post('{billTask}/archive', ['uses' => 'IndexController@postArchive', 'as' => 'archive']);
+        Route::post('{billTask}/import', ['uses' => 'IndexController@postImportRows', 'as' => 'import']);
         Route::post('{billTask}/retry', ['uses' => 'IndexController@postRetry', 'as' => 'retry']);
         Route::post('{billTask}/ignore', ['uses' => 'IndexController@postIgnore', 'as' => 'ignore']);
     }

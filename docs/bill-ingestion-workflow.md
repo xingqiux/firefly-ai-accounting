@@ -1,5 +1,7 @@
 # Bill Ingestion Workflow
 
+> 当前实现准则见 `docs/bill-ingestion-channel-architecture.md`。本文保留早期工作流背景，部分“不做 UI/不做支付宝解析”的阶段描述已经被后续实现取代。
+
 ## Goal
 
 Build a generic bill ingestion workflow before implementing any specific Alipay, WeChat, or bank parser.
@@ -169,6 +171,8 @@ processor:
 - `consumedAt`
 
 Secrets should be supplied through CLI or future UI at processing time. The system should not persist the plaintext secret unless a later explicit encrypted secret store is designed.
+
+UI rule: 账单收件箱界面禁止展示关于密码存储策略、明文处理方式、内部安全实现的说明性小字。界面只呈现用户需要执行的动作；实现和安全策略放在工程文档、审计事件或代码注释。
 
 ### BillDocument
 

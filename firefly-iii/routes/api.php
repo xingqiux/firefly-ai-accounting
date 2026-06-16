@@ -407,12 +407,39 @@ Route::group(
     ],
     static function (): void {
         Route::get('', ['uses' => 'ShowController@index', 'as' => 'index']);
+        Route::post('archive', ['uses' => 'ActionController@archiveMany', 'as' => 'archive-many']);
         Route::get('{billTask}', ['uses' => 'ShowController@show', 'as' => 'show']);
         Route::get('{billTask}/artifacts', ['uses' => 'ListController@artifacts', 'as' => 'artifacts']);
         Route::get('{billTask}/events', ['uses' => 'ListController@events', 'as' => 'events']);
+        Route::get('{billTask}/rows', ['uses' => 'ListController@rows', 'as' => 'rows']);
         Route::post('{billTask}/secret', ['uses' => 'ActionController@secret', 'as' => 'secret']);
         Route::post('{billTask}/retry', ['uses' => 'ActionController@retry', 'as' => 'retry']);
         Route::post('{billTask}/ignore', ['uses' => 'ActionController@ignore', 'as' => 'ignore']);
+        Route::post('{billTask}/archive', ['uses' => 'ActionController@archive', 'as' => 'archive']);
+        Route::post('{billTask}/import', ['uses' => 'ActionController@import', 'as' => 'import']);
+    }
+);
+
+Route::group(
+    [
+        'namespace' => 'FireflyIII\Api\V1\Controllers\Models\BillTask',
+        'prefix'    => 'v1/bill-statement-rows',
+        'as'        => 'api.v1.bill-statement-rows.',
+    ],
+    static function (): void {
+        Route::get('{billStatementRow}', ['uses' => 'ActionController@showRow', 'as' => 'show']);
+        Route::patch('{billStatementRow}', ['uses' => 'ActionController@updateRow', 'as' => 'update']);
+    }
+);
+
+Route::group(
+    [
+        'namespace' => 'FireflyIII\Api\V1\Controllers\Models\BillTask',
+        'prefix'    => 'v1/bill-artifacts',
+        'as'        => 'api.v1.bill-artifacts.',
+    ],
+    static function (): void {
+        Route::get('{billArtifact}/download', ['uses' => 'ArtifactController@download', 'as' => 'download']);
     }
 );
 

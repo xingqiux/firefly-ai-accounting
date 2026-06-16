@@ -64,10 +64,19 @@ describe('bill inbox commands', () => {
       ],
     });
 
-    const result = await runCli(['bill-inbox', 'list', '--format', 'json']);
+    const result = await runCli([
+      'bill-inbox',
+      'list',
+      '--source',
+      'alipay',
+      '--status',
+      'parsed',
+      '--format',
+      'json',
+    ]);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:8000/api/v1/bill-tasks',
+      'http://127.0.0.1:8000/api/v1/bill-tasks?source=alipay&status=parsed',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
@@ -126,6 +135,112 @@ describe('bill inbox commands', () => {
       'http://127.0.0.1:8000/api/v1/bill-tasks/1/events',
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+
+  test('lists statement rows with filters through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({ data: [] });
+
+    await runCli([
+      'bill-inbox',
+      'rows',
+      '1',
+      '--status',
+      'pending',
+      '--from',
+      '2026-05-15',
+      '--to',
+      '2026-06-15',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/rows?status=pending&from=2026-05-15&to=2026-06-15',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  test('shows and updates a statement row through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        id: '9',
+        type: 'bill-statement-rows',
+        attributes: { counterparty: '中国联通' },
+      },
+    });
+
+    await runCli(['bill-inbox', 'row', 'show', '9', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-statement-rows/9',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    await runCli([
+      'bill-inbox',
+      'row',
+      'update',
+      '9',
+      '--set',
+      'counterparty=中国联通线上营业厅',
+      '--set',
+      'firefly_amount=20.00',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-statement-rows/9',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({
+      counterparty: '中国联通线上营业厅',
+      firefly_amount: '20.00',
+    });
+  });
+
+  test('imports statement rows with dry run and confirmation flags', async () => {
+    const fetchMock = mockJsonFetch({
+      summary: { total: 3, imported: 3, skipped: 0, failed: 0 },
+      rows: [],
+    });
+
+    await runCli(['bill-inbox', 'import', '1', '--rows', '5,6,7', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/import',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({
+      row_ids: [5, 6, 7],
+      confirm: false,
+    });
+
+    await runCli(['bill-inbox', 'import', '1', '--all', '--confirm', '--format', 'json']);
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({
+      all: true,
+      confirm: true,
+    });
+  });
+
+  test('archives one or many bill tasks through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: { id: '1', type: 'bill-tasks', attributes: { status: 'cleaned' } },
+    });
+
+    await runCli(['bill-inbox', 'archive', '1', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/1/archive',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    await runCli(['bill-inbox', 'archive', '--ids', '5,6,7', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/archive',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({ ids: [5, 6, 7] });
   });
 
   test('submits a secret through the Firefly API', async () => {

@@ -32,7 +32,7 @@
                         {% endif %}
 
                         <p class="text-muted">
-                            可以接管一个普通邮箱账号。默认按 Gmail 配好连接，只处理你指定的账单邮件，其他邮件会被同步流程忽略。
+                            可以接管一个普通 Gmail 账号。当前内置处理支付宝交易流水邮件：系统会在收件箱中识别支付宝官方邮件和加密账单附件。
                         </p>
 
                         <div class="form-group">
@@ -67,18 +67,12 @@
                         </div>
 
                         <div class="form-group">
-                            <label for="quick-gmail-label" class="col-sm-3 control-label">只处理这些邮件</label>
+                            <label class="col-sm-3 control-label">内置渠道</label>
                             <div class="col-sm-9">
-                                <input id="quick-gmail-label" class="form-control" type="text" name="quick_gmail_label" value="{{ quickSettings.gmail_label }}" placeholder="Gmail 标签，例如 Bills">
-                                <p class="help-block">推荐在 Gmail 里先给账单邮件打一个标签。留空时会用下面的关键词匹配。</p>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="quick-keywords" class="col-sm-3 control-label">关键词</label>
-                            <div class="col-sm-9">
-                                <input id="quick-keywords" class="form-control" type="text" name="quick_keywords" value="{{ quickSettings.keywords }}" placeholder="账单, statement, 支付宝">
-                                <p class="help-block">用逗号分隔，匹配主题或邮件正文。默认值通常已经够用。</p>
+                                {% for channel in builtInChannels %}
+                                    <p class="form-control-static">{{ channel.name }}</p>
+                                    <p class="help-block">{{ channel.description }}</p>
+                                {% endfor %}
                             </div>
                         </div>
 

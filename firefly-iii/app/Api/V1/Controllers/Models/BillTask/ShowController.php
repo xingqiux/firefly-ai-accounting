@@ -21,11 +21,20 @@ final class ShowController extends Controller
         /** @var User $user */
         $user                                = auth()->user();
 
-        $paginator                           = $user->billTasks()
+        $query                               = $user->billTasks()
             ->orderByDesc('received_at')
             ->orderByDesc('id')
-            ->paginate($limit, ['*'], 'page', $page)
         ;
+        $source                              = (string) $request->query('source', '');
+        $status                              = (string) $request->query('status', '');
+        if ('' !== $source) {
+            $query->where('source', $source);
+        }
+        if ('' !== $status) {
+            $query->where('status', $status);
+        }
+
+        $paginator                           = $query->paginate($limit, ['*'], 'page', $page);
 
         return response()->json($this->collectionResponse($paginator));
     }
@@ -35,6 +44,7 @@ final class ShowController extends Controller
         $billTask->load([
             'mailMessage',
             'artifacts'              => fn ($query) => $query->orderBy('id'),
+            'statementImports'       => fn ($query) => $query->orderBy('id'),
             'currentSecretChallenge',
             'events'                 => fn ($query) => $query->orderBy('id'),
         ]);

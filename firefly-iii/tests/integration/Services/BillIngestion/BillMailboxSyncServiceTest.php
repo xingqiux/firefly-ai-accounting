@@ -31,6 +31,20 @@ final class BillMailboxSyncServiceTest extends TestCase
 
     private User $user;
 
+    public function testBuiltInChannelsExposeMailboxSearchCriteriaThroughRegistry(): void
+    {
+        $registryClass = 'FireflyIII\Services\BillIngestion\BillSourceChannelRegistry';
+        $channelClass  = 'FireflyIII\Services\BillIngestion\Channels\AlipayBillSourceChannel';
+
+        $this->assertTrue(class_exists($registryClass));
+        $this->assertTrue(class_exists($channelClass));
+
+        $registry = app($registryClass);
+
+        $this->assertSame(['FROM "service@mail.alipay.com"'], $registry->mailboxSearchCriteria());
+        $this->assertSame('alipay', $registry->find('alipay', 'alipay-statement')?->source());
+    }
+
     public function testSyncCreatesAlipayTaskFromConfiguredGmailMailbox(): void
     {
         Storage::fake('local');
@@ -105,19 +119,46 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame([], $client->seenUids);
     }
 
-    public function testSyncUsesConfiguredGmailLabelAsMailboxFolder(): void
+    public function testBuiltInAlipayChannelIgnoresConfiguredGmailLabelAndUsesInbox(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient([
+            new FakeImapMailMessage('42', $this->alipayRawMessage()),
+        ], ['buii']);
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox(quickLabel: 'buii');
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+
+        $this->assertSame(1, $result->created);
+        $this->assertSame(0, $result->failed);
+        $this->assertSame([], $result->errors);
+        $this->assertSame(['INBOX'], $client->selectedFolders);
+        $this->assertSame(['FROM "service@mail.alipay.com"'], $client->searches);
+    }
+
+    public function testBuiltInAlipayChannelDoesNotDependOnCustomProcessingRules(): void
     {
         Storage::fake('local');
         $client = new FakeImapBillMailboxClient([
             new FakeImapMailMessage('42', $this->alipayRawMessage()),
         ]);
         $this->app->instance(ImapBillMailboxClient::class, $client);
-        $this->configureMailbox(quickLabel: 'Bills');
+        $this->configureMailbox(quickLabel: 'buii');
+        Preferences::set('bill_inbox_processing_rules', [[
+            'enabled'          => true,
+            'name'             => '自定义测试规则',
+            'source'           => 'bank',
+            'from_contains'    => 'bank@example.com',
+            'subject_contains' => '信用卡账单',
+            'gmail_label'      => 'buii',
+        ]]);
 
         $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
 
         $this->assertSame(1, $result->created);
-        $this->assertSame(['Bills'], $client->selectedFolders);
+        $this->assertSame(['INBOX'], $client->selectedFolders);
+        $this->assertSame(['FROM "service@mail.alipay.com"'], $client->searches);
     }
 
     public function testSyncDoesNothingWhenMailboxIsDisabled(): void
@@ -220,6 +261,9 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
     private array $messages;
 
     /** @var array<int, string> */
+    private array $missingFolders;
+
+    /** @var array<int, string> */
     public array $selectedFolders = [];
 
     /** @var array<int, string> */
@@ -232,10 +276,12 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
 
     /**
      * @param array<int, FakeImapMailMessage> $messages
+     * @param array<int, string>              $missingFolders
      */
-    public function __construct(array $messages)
+    public function __construct(array $messages, array $missingFolders = [])
     {
-        $this->messages = $messages;
+        $this->messages       = $messages;
+        $this->missingFolders = $missingFolders;
     }
 
     public function connect(BillMailboxConfig $config): void
@@ -246,6 +292,9 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
     public function selectFolder(string $folder): void
     {
         $this->selectedFolders[] = $folder;
+        if (in_array($folder, $this->missingFolders, true)) {
+            throw new \RuntimeException(sprintf('IMAP command failed: A0002 NO [NONEXISTENT] Unknown Mailbox: %s (Failure)', $folder));
+        }
     }
 
     public function search(string $criteria, int $limit): array

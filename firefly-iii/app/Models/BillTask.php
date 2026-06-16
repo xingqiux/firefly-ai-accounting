@@ -80,6 +80,16 @@ class BillTask extends Model
         return $this->hasMany(BillSecretChallenge::class);
     }
 
+    public function statementImports(): HasMany
+    {
+        return $this->hasMany(BillStatementImport::class);
+    }
+
+    public function statementRows(): HasMany
+    {
+        return $this->hasMany(BillStatementRow::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

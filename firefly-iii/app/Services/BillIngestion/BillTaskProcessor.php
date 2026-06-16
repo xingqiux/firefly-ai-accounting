@@ -12,6 +12,8 @@ class BillTaskProcessor
 {
     private const array PROCESSABLE_STATUSES = ['received', 'ready'];
 
+    public function __construct(private readonly BillSourceChannelRegistry $channelRegistry) {}
+
     public function processBatch(int $limit = 25): BillTaskBatchResult
     {
         $limit     = max(1, min($limit, 500));
@@ -28,16 +30,16 @@ class BillTaskProcessor
         return new BillTaskBatchResult($processed, $failed);
     }
 
-    public function process(BillTask $task): bool
+    public function process(BillTask $task, ?string $secret = null): bool
     {
-        return DB::transaction(function () use ($task): bool {
+        return DB::transaction(function () use ($task, $secret): bool {
             $task->refresh();
 
             if ('received' === $task->status) {
                 return $this->routeReceivedTask($task);
             }
             if ('ready' === $task->status) {
-                return $this->processReadyTask($task);
+                return $this->processReadyTask($task, $secret);
             }
 
             return true;
@@ -60,7 +62,8 @@ class BillTaskProcessor
 
     private function routeReceivedTask(BillTask $task): bool
     {
-        if ('unknown' === $task->source || null === $task->profile_id) {
+        $channel = $this->channelRegistry->find($task->source, $task->profile_id);
+        if (null === $channel) {
             $task->status = 'unknown';
             $task->save();
             $this->appendEvent($task, 'task.unknown', '未匹配到账单处理配置');
@@ -68,10 +71,10 @@ class BillTaskProcessor
             return true;
         }
 
-        if ($this->needsSecret($task)) {
+        if ($channel->needsSecret($task)) {
             $challenge = $task->secretChallenges()->create([
                 'kind'     => 'password',
-                'prompt'   => $this->secretPrompt($task),
+                'prompt'   => $channel->secretPrompt($task),
                 'status'   => 'open',
                 'attempts' => 0,
             ]);
@@ -91,7 +94,17 @@ class BillTaskProcessor
         return true;
     }
 
-    private function processReadyTask(BillTask $task): bool
+    private function processReadyTask(BillTask $task, ?string $secret = null): bool
+    {
+        $channel = $this->channelRegistry->find($task->source, $task->profile_id);
+        if (null !== $channel) {
+            return $channel->process($task, $secret);
+        }
+
+        return $this->failMissingProcessor($task);
+    }
+
+    private function failMissingProcessor(BillTask $task): bool
     {
         $task->status        = 'failed';
         $task->error_code    = 'processor_missing';
@@ -100,20 +113,6 @@ class BillTaskProcessor
         $this->appendEvent($task, 'task.failed', '缺少来源处理器，任务暂时无法解析');
 
         return false;
-    }
-
-    private function needsSecret(BillTask $task): bool
-    {
-        return $task->artifacts()->where('encrypted', true)->exists();
-    }
-
-    private function secretPrompt(BillTask $task): string
-    {
-        if ('alipay' === $task->source && 'alipay-statement' === $task->profile_id) {
-            return '请输入支付宝服务消息中的账单解压密码';
-        }
-
-        return '请输入账单解密密码或验证码';
     }
 
     private function appendEvent(BillTask $task, string $eventType, string $message): void

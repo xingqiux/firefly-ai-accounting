@@ -53,6 +53,8 @@ use FireflyIII\Repositories\UserGroup\UserGroupRepository;
 use FireflyIII\Repositories\UserGroup\UserGroupRepositoryInterface;
 use FireflyIII\Repositories\Webhook\WebhookRepository;
 use FireflyIII\Repositories\Webhook\WebhookRepositoryInterface;
+use FireflyIII\Services\BillIngestion\BillSourceChannelRegistry;
+use FireflyIII\Services\BillIngestion\Channels\AlipayBillSourceChannel;
 use FireflyIII\Services\BillIngestion\ImapBillMailboxClient;
 use FireflyIII\Services\BillIngestion\NativeImapBillMailboxClient;
 use FireflyIII\Services\FireflyIIIOrg\Update\GitHubUpdateRequest;
@@ -123,6 +125,12 @@ class FireflyServiceProvider extends ServiceProvider
 
         $this->app->bind('ruleform', static fn (): RuleForm => new RuleForm());
         $this->app->bind(ImapBillMailboxClient::class, NativeImapBillMailboxClient::class);
+        $this->app->singleton(
+            BillSourceChannelRegistry::class,
+            static fn (): BillSourceChannelRegistry => new BillSourceChannelRegistry([
+                app(AlipayBillSourceChannel::class),
+            ])
+        );
 
         // chart generator:
         $this->app->bind(GeneratorInterface::class, ChartJsGenerator::class);
