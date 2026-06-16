@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FireflyIII\Services\BillIngestion;
 
 use FireflyIII\Models\BillTask;
+use FireflyIII\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -14,13 +15,13 @@ class BillTaskProcessor
 
     public function __construct(private readonly BillSourceChannelRegistry $channelRegistry) {}
 
-    public function processBatch(int $limit = 25): BillTaskBatchResult
+    public function processBatch(int $limit = 25, ?User $user = null): BillTaskBatchResult
     {
         $limit     = max(1, min($limit, 500));
         $processed = 0;
         $failed    = 0;
 
-        $this->nextTasks($limit)->each(function (BillTask $task) use (&$processed, &$failed): void {
+        $this->nextTasks($limit, $user)->each(function (BillTask $task) use (&$processed, &$failed): void {
             ++$processed;
             if (false === $this->process($task)) {
                 ++$failed;
@@ -49,15 +50,19 @@ class BillTaskProcessor
     /**
      * @return Collection<int, BillTask>
      */
-    private function nextTasks(int $limit): Collection
+    private function nextTasks(int $limit, ?User $user = null): Collection
     {
-        return BillTask::query()
+        $query = BillTask::query()
             ->whereIn('status', self::PROCESSABLE_STATUSES)
             ->orderBy('received_at')
             ->orderBy('id')
             ->limit($limit)
-            ->get()
         ;
+        if (null !== $user) {
+            $query->where('user_id', $user->id);
+        }
+
+        return $query->get();
     }
 
     private function routeReceivedTask(BillTask $task): bool

@@ -62,12 +62,15 @@ final class ActionController extends Controller
         $validated = $request->validate([
             'row_ids'   => ['nullable', 'array'],
             'row_ids.*' => ['integer'],
-            'all'       => ['nullable', 'boolean'],
-            'confirm'   => ['nullable', 'boolean'],
+            'all'             => ['nullable', 'boolean'],
+            'confirm'         => ['nullable', 'boolean'],
+            'include_payload' => ['nullable', 'boolean'],
         ]);
 
         $rowIds = $request->boolean('all') ? [] : array_map('intval', $validated['row_ids'] ?? []);
-        $result = $this->rowImportService->importTaskRows(auth()->user(), $billTask->id, $rowIds, $request->boolean('confirm'));
+        $result = $this->rowImportService->importTaskRows(auth()->user(), $billTask->id, $rowIds, $request->boolean('confirm'), [
+            'include_payload' => $request->boolean('include_payload'),
+        ]);
 
         return response()->json($result);
     }

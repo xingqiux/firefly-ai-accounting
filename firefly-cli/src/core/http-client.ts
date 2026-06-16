@@ -31,6 +31,45 @@ export class FireflyHttpClient {
     path: string,
     options: FireflyRequestOptions = {},
   ): Promise<T> {
+    const { response, url } = await this.fetchResponse(method, path, options);
+    const rawBody = await response.text();
+    const parsedBody = parseResponseBody(rawBody, response.headers.get('content-type'));
+
+    if (!response.ok) {
+      throw new FireflyHttpError({
+        status: response.status,
+        method: method.toUpperCase(),
+        url,
+        body: parsedBody,
+        rawBody,
+      });
+    }
+
+    return parsedBody as T;
+  }
+
+  async download(path: string, options: FireflyRequestOptions = {}): Promise<ArrayBuffer> {
+    const { response, url } = await this.fetchResponse('GET', path, options);
+    if (!response.ok) {
+      const rawBody = await response.text();
+      const parsedBody = parseResponseBody(rawBody, response.headers.get('content-type'));
+      throw new FireflyHttpError({
+        status: response.status,
+        method: 'GET',
+        url,
+        body: parsedBody,
+        rawBody,
+      });
+    }
+
+    return response.arrayBuffer();
+  }
+
+  private async fetchResponse(
+    method: string,
+    path: string,
+    options: FireflyRequestOptions,
+  ): Promise<{ response: Response; url: string }> {
     const url = buildUrl(this.options.baseUrl, path, options.query);
     const headers: Record<string, string> = {
       Accept: 'application/json',
@@ -53,14 +92,15 @@ export class FireflyHttpClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
-    let response: Response;
     try {
-      response = await this.fetchImpl(url, {
+      const response = await this.fetchImpl(url, {
         method: method.toUpperCase(),
         headers,
         body,
         signal: controller.signal,
       });
+
+      return { response, url };
     } catch (error) {
       throw new FireflyNetworkError(
         `Could not reach Firefly III at ${url}. Check the configured base URL and whether the server is running.`,
@@ -69,21 +109,6 @@ export class FireflyHttpClient {
     } finally {
       clearTimeout(timer);
     }
-
-    const rawBody = await response.text();
-    const parsedBody = parseResponseBody(rawBody, response.headers.get('content-type'));
-
-    if (!response.ok) {
-      throw new FireflyHttpError({
-        status: response.status,
-        method: method.toUpperCase(),
-        url,
-        body: parsedBody,
-        rawBody,
-      });
-    }
-
-    return parsedBody as T;
   }
 }
 

@@ -171,7 +171,7 @@ class IndexController extends Controller
     public function postSync(): RedirectResponse
     {
         $result    = $this->mailboxSyncService->syncForUser(auth()->user(), 25);
-        $processed = $this->taskProcessor->processBatch(25);
+        $processed = $this->taskProcessor->processBatch(25, auth()->user());
 
         if ([] !== $result->errors) {
             session()->flash('error', implode(' ', $result->errors));
@@ -381,7 +381,7 @@ class IndexController extends Controller
     private function secretSubmittedMessage(BillTask $billTask): string
     {
         return match ($billTask->status) {
-            'parsed'  => '账单已解析，已生成流水明细。',
+            'parsed'  => $billTask->statementRows()->exists() ? '账单已解析，已生成流水明细。' : '账单已解压，可下载附件查看。',
             'ready'   => '验证码/密码已提交，等待处理。',
             default   => '验证码/密码已提交。',
         };

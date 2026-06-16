@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -160,6 +160,33 @@ describe('bill inbox commands', () => {
     );
   });
 
+  test('requests compact statement row summaries through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      summary: {
+        total: 117,
+        by_status: { pending: 117 },
+        amounts: { expense: '99.00', income: '0.00', net: '-99.00' },
+      },
+      data: [],
+    });
+
+    await runCli([
+      'bill-inbox',
+      'rows',
+      '13',
+      '--summary',
+      '--limit',
+      '10',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/13/rows?summary=true&limit=10',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   test('shows and updates a statement row through the Firefly API', async () => {
     const fetchMock = mockJsonFetch({
       data: {
@@ -224,6 +251,39 @@ describe('bill inbox commands', () => {
     });
   });
 
+  test('can explicitly request dry-run payloads for bill imports', async () => {
+    const fetchMock = mockJsonFetch({
+      summary: { total: 1, imported: 0, skipped: 1, failed: 0 },
+      rows: [],
+    });
+
+    await runCli(['bill-inbox', 'import', '1', '--all', '--include-payload', '--format', 'json']);
+
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({
+      all: true,
+      confirm: false,
+      include_payload: true,
+    });
+  });
+
+  test('reviews statement rows before importing through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      summary: { total: 117, pending: 117, importable: 100 },
+      new_candidates: [],
+      existing_candidates: [],
+      transfer_candidates: [],
+      refund_pairs: [],
+      needs_user_note: [],
+    });
+
+    await runCli(['bill-inbox', 'review', '13', '--format', 'json']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-tasks/13/review',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   test('archives one or many bill tasks through the Firefly API', async () => {
     const fetchMock = mockJsonFetch({
       data: { id: '1', type: 'bill-tasks', attributes: { status: 'cleaned' } },
@@ -284,5 +344,127 @@ describe('bill inbox commands', () => {
       'http://127.0.0.1:8000/api/v1/bill-tasks/1/retry',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  test('syncs and processes bill inbox tasks through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        type: 'bill-inbox-sync-result',
+        attributes: {
+          scanned: 2,
+          created: 1,
+          ignored: 0,
+          duplicates: 1,
+          failed: 0,
+          processed: 1,
+          process_failed: 0,
+          errors: [],
+        },
+      },
+    });
+
+    await runCli(['bill-inbox', 'sync', '--limit', '50', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-inbox/sync',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({ limit: 50 });
+
+    await runCli(['bill-inbox', 'process', '--limit', '10', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-inbox/process',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({ limit: 10 });
+  });
+
+  test('shows and updates mailbox settings through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        type: 'bill-inbox-settings',
+        attributes: {
+          enabled: true,
+          provider: 'gmail',
+          email: 'user@example.com',
+          host: 'imap.gmail.com',
+          port: 993,
+          encryption: 'ssl',
+          username: 'user@example.com',
+          folder: 'INBOX',
+          has_password: true,
+          built_in_channels: [],
+        },
+      },
+    });
+
+    await runCli(['bill-inbox', 'settings', 'show', '--format', 'json']);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-inbox/settings',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    await runCli([
+      'bill-inbox',
+      'settings',
+      'set',
+      '--enabled',
+      '--provider',
+      'gmail',
+      '--email',
+      'user@example.com',
+      '--password',
+      'app-pass',
+      '--format',
+      'json',
+    ]);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-inbox/settings',
+      expect.objectContaining({
+        method: 'PUT',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }),
+    );
+    expect(requestBody(fetchMock.mock.calls[1])).toEqual({
+      enabled: true,
+      provider: 'gmail',
+      email: 'user@example.com',
+      password: 'app-pass',
+    });
+  });
+
+  test('cleans up stale bill inbox tasks through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      data: {
+        type: 'bill-inbox-cleanup-result',
+        attributes: { archived: 3 },
+      },
+    });
+
+    await runCli(['bill-inbox', 'cleanup-stale', '--format', 'json']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-inbox/cleanup-stale',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({});
+  });
+
+  test('downloads a bill artifact to a local file', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () =>
+        new Response('zip-bytes', {
+          status: 200,
+          headers: { 'content-type': 'application/zip' },
+        }),
+    );
+    const output = join(tempDir, 'artifact.zip');
+
+    await runCli(['bill-inbox', 'artifact', 'download', '9', '--output', output, '--format', 'json']);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-artifacts/9/download',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(await readFile(output, 'utf8')).toBe('zip-bytes');
   });
 });

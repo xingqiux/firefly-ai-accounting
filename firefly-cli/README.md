@@ -163,14 +163,33 @@ ffc auth set-token --url http://127.0.0.1:8000 --token <personal-access-token>
 Inspect and progress tasks:
 
 ```bash
+ffc bill-inbox settings show --format json
+ffc bill-inbox settings set --enabled --provider gmail --email bills@example.com --password <app-password>
+ffc bill-inbox sync --limit 50 --format json
+ffc bill-inbox process --limit 25 --format json
 ffc bill-inbox list --format json
 ffc bill-inbox show <taskId> --format json
 ffc bill-inbox artifacts <taskId> --format json
+ffc bill-inbox artifact download <artifactId> --output ./statement.zip
 ffc bill-inbox events <taskId> --format json
 ffc bill-inbox secret submit <taskId> --value <password> --format json
+ffc bill-inbox rows <taskId> --status pending --format json
+ffc bill-inbox rows <taskId> --summary --limit 20 --format json
+ffc bill-inbox review <taskId> --format json
+ffc bill-inbox row show <rowId> --format json
+ffc bill-inbox row update <rowId> --set category_name=通讯 --set firefly_description=手机充值
+ffc bill-inbox import <taskId> --all --format json
+ffc bill-inbox import <taskId> --all --include-payload --format json
+ffc bill-inbox import <taskId> --all --confirm
 ffc bill-inbox retry <taskId> --format json
 ffc bill-inbox ignore <taskId> --format json
+ffc bill-inbox archive <taskId> --format json
+ffc bill-inbox cleanup-stale --format json
 ```
+
+`sync` scans the configured mailbox using the built-in Alipay, WeChat, and CMB criteria, creates bill tasks, and then advances processable tasks. Alipay statement emails use encrypted ZIP attachments. WeChat Pay statement emails use the official Tenpay download link in the message body; Firefly downloads the encrypted ZIP before asking for the password. After `secret submit`, parsed CSV/XLSX/PDF rows can be reviewed with `rows --summary` or `review`, edited with `row update`, dry-run imported with `import`, and committed with `--confirm`.
+
+Dry-run import output is compact by default: it returns counts, row IDs, status, errors, and redacted previews. Add `--include-payload` only when debugging the generated Firefly transaction payload.
 
 ## Platform Operations
 

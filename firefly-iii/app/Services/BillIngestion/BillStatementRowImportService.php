@@ -16,14 +16,19 @@ use Throwable;
 
 class BillStatementRowImportService
 {
-    public function __construct(private readonly TransactionGroupRepositoryInterface $transactionRepository) {}
+    public function __construct(
+        private readonly TransactionGroupRepositoryInterface $transactionRepository,
+        private readonly BillStatementRowSummaryService $rowSummaryService,
+    ) {}
 
     /**
      * @param array<int,int> $rowIds
      *
+     * @param array{include_payload?:bool} $options
+     *
      * @return array{summary:array{total:int,imported:int,skipped:int,failed:int},rows:array<int,array<string,mixed>>}
      */
-    public function importTaskRows(User $user, int $taskId, array $rowIds = [], bool $confirm = false): array
+    public function importTaskRows(User $user, int $taskId, array $rowIds = [], bool $confirm = false, array $options = []): array
     {
         $query = BillStatementRow::query()
             ->where('user_id', $user->id)
@@ -40,7 +45,7 @@ class BillStatementRowImportService
         $summary = ['total' => $rows->count(), 'imported' => 0, 'skipped' => 0, 'failed' => 0];
 
         foreach ($rows as $row) {
-            $report = $this->importRow($user, $row, $confirm);
+            $report = $this->importRow($user, $row, $confirm, (bool) ($options['include_payload'] ?? false));
             ++$summary[$report['status']];
             $reports[] = $report;
         }
@@ -52,35 +57,36 @@ class BillStatementRowImportService
     }
 
     /**
-     * @return array{row_id:string,status:string,transaction_group_id?:string,error?:string,payload?:array<string,mixed>}
+     * @return array<string,mixed>
      */
-    private function importRow(User $user, BillStatementRow $row, bool $confirm): array
+    private function importRow(User $user, BillStatementRow $row, bool $confirm, bool $includePayload): array
     {
         if ('imported' === $row->status && null !== $row->transaction_group_id) {
-            return [
-                'row_id'               => (string) $row->id,
+            return $this->reportForRow($row, [
                 'status'               => 'skipped',
                 'transaction_group_id' => (string) $row->transaction_group_id,
                 'error'                => '这条流水已经存入 Firefly。',
-            ];
+            ]);
         }
 
         if (null === $row->firefly_type || '' === $row->firefly_type) {
-            return [
-                'row_id' => (string) $row->id,
+            return $this->reportForRow($row, [
                 'status' => 'skipped',
                 'error'  => '这条流水不是可直接导入的收支记录。',
-            ];
+            ]);
         }
 
         $payload = $this->payloadForRow($user, $row);
         if (!$confirm) {
-            return [
-                'row_id'  => (string) $row->id,
-                'status'  => 'skipped',
-                'payload' => $payload,
-                'error'   => '未确认导入。',
+            $report = [
+                'status' => 'skipped',
+                'error'  => '未确认导入。',
             ];
+            if ($includePayload) {
+                $report['payload'] = $this->publicPayload($payload);
+            }
+
+            return $this->reportForRow($row, $report);
         }
 
         try {
@@ -102,18 +108,38 @@ class BillStatementRowImportService
             $row->error_message = $e->getMessage();
             $row->save();
 
-            return [
-                'row_id' => (string) $row->id,
+            return $this->reportForRow($row, [
                 'status' => 'failed',
                 'error'  => $e instanceof FireflyException ? $e->getMessage() : sprintf('导入失败：%s', $e->getMessage()),
-            ];
+            ]);
         }
 
-        return [
-            'row_id'               => (string) $row->id,
+        return $this->reportForRow($row->refresh(), [
             'status'               => 'imported',
             'transaction_group_id' => (string) $group->id,
-        ];
+        ]);
+    }
+
+    /**
+     * @param array<string,mixed> $overrides
+     *
+     * @return array<string,mixed>
+     */
+    private function reportForRow(BillStatementRow $row, array $overrides): array
+    {
+        return array_replace($this->rowSummaryService->rowPreview($row), $overrides);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     *
+     * @return array<string,mixed>
+     */
+    private function publicPayload(array $payload): array
+    {
+        unset($payload['user'], $payload['user_group']);
+
+        return $payload;
     }
 
     /**

@@ -365,7 +365,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('ssl', Preferences::get('bill_inbox_mailbox_encryption')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(2, $rules);
+        $this->assertCount(3, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -381,6 +381,13 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame(['微信支付', '账单流水'], $rules[1]['keywords']);
         $this->assertTrue($rules[1]['built_in']);
         $this->assertTrue($rules[1]['enabled']);
+        $this->assertSame('招商银行交易流水', $rules[2]['name']);
+        $this->assertSame('cmb', $rules[2]['source']);
+        $this->assertSame('95555@message.cmbchina.com', $rules[2]['from_contains']);
+        $this->assertSame('招商银行交易流水', $rules[2]['subject_contains']);
+        $this->assertSame(['招商银行', '交易流水'], $rules[2]['keywords']);
+        $this->assertTrue($rules[2]['built_in']);
+        $this->assertTrue($rules[2]['enabled']);
         $this->assertSame('', Preferences::get('bill_inbox_quick_gmail_label')->data);
         $this->assertSame('', Preferences::get('bill_inbox_quick_keywords')->data);
     }
@@ -553,7 +560,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('INBOX', Preferences::get('bill_inbox_mailbox_folder')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(2, $rules);
+        $this->assertCount(3, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -570,6 +577,14 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('', $rules[1]['gmail_label']);
         $this->assertTrue($rules[1]['built_in']);
         $this->assertTrue($rules[1]['enabled']);
+        $this->assertSame('招商银行交易流水', $rules[2]['name']);
+        $this->assertSame('cmb', $rules[2]['source']);
+        $this->assertSame('95555@message.cmbchina.com', $rules[2]['from_contains']);
+        $this->assertSame('招商银行交易流水', $rules[2]['subject_contains']);
+        $this->assertSame(['zip'], $rules[2]['attachment_extensions']);
+        $this->assertSame('', $rules[2]['gmail_label']);
+        $this->assertTrue($rules[2]['built_in']);
+        $this->assertTrue($rules[2]['enabled']);
     }
 
     private function alipayRawMessage(): string

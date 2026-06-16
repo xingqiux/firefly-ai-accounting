@@ -17,6 +17,7 @@ use FireflyIII\Models\AccountType;
 use FireflyIII\Models\GroupMembership;
 use FireflyIII\Models\UserGroup;
 use FireflyIII\Models\UserRole;
+use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
@@ -27,6 +28,7 @@ use Tests\integration\TestCase;
  * @internal
  *
  * @covers \FireflyIII\Api\V1\Controllers\Models\BillTask\ActionController
+ * @covers \FireflyIII\Api\V1\Controllers\Models\BillTask\BillInboxController
  * @covers \FireflyIII\Api\V1\Controllers\Models\BillTask\ListController
  * @covers \FireflyIII\Api\V1\Controllers\Models\BillTask\ShowController
  */
@@ -256,6 +258,58 @@ final class BillTaskControllerTest extends TestCase
         $this->assertSame('手机充值', $row->firefly_description);
     }
 
+    public function testRowsSummaryReturnsCompactRedactedPreview(): void
+    {
+        $first = $this->createStatementRow([
+            'description'            => '为15512345678交费20.00元',
+            'firefly_description'    => '为15512345678交费20.00元',
+            'platform_order_no'      => '2026061522001414871443694067',
+            'merchant_order_no'      => 'CP0232671781515214344949',
+            'counterparty_account'   => 'ah-15512345678@chinaunicom.cn',
+        ]);
+        $this->createStatementRow([
+            'row_number'          => 2,
+            'direction'           => '收入',
+            'amount'              => '88.00',
+            'firefly_type'        => 'deposit',
+            'firefly_amount'      => '88.00',
+            'source_name'         => '退款商户',
+            'destination_name'    => '招商银行',
+            'counterparty'        => '退款商户',
+            'description'         => '订单2026061522001414871443694067退款',
+            'platform_order_no'   => '2026061522001414871443694999',
+            'merchant_order_no'   => 'CP0232671781515214999999',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->getJson(route('api.v1.bill-tasks.rows', [
+            'billTask' => $this->task->id,
+            'summary'  => true,
+            'limit'    => 1,
+        ]));
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('summary.total', 2);
+        $response->assertJsonPath('summary.by_status.pending', 2);
+        $response->assertJsonPath('summary.by_direction.支出', 1);
+        $response->assertJsonPath('summary.by_direction.收入', 1);
+        $response->assertJsonPath('summary.by_firefly_type.withdrawal', 1);
+        $response->assertJsonPath('summary.by_firefly_type.deposit', 1);
+        $response->assertJsonPath('summary.amounts.expense', '14.95');
+        $response->assertJsonPath('summary.amounts.income', '88.00');
+        $response->assertJsonPath('summary.amounts.net', '73.05');
+        $response->assertJsonPath('data.0.row_id', (string) $first->id);
+        $response->assertJsonPath('data.0.description_preview', '为15****78交费20.00元');
+        $response->assertJsonMissingPath('data.0.platform_order_no');
+        $response->assertJsonMissingPath('data.0.merchant_order_no');
+        $response->assertJsonMissingPath('data.0.counterparty_account');
+        $response->assertJsonMissingPath('data.0.raw_data');
+        $response->assertJsonMissingPath('data.0.editable_data');
+        $this->assertStringNotContainsString('2026061522001414871443694067', $response->getContent());
+        $this->assertStringNotContainsString('CP0232671781515214344949', $response->getContent());
+        $this->assertStringNotContainsString('15512345678', $response->getContent());
+    }
+
     public function testArchivesTaskWithoutDeletingFiles(): void
     {
         Storage::fake('local');
@@ -316,6 +370,145 @@ final class BillTaskControllerTest extends TestCase
         $this->assertSame('zip bytes', $response->streamedContent());
     }
 
+    public function testShowsBillInboxSettings(): void
+    {
+        Preferences::set('bill_inbox_mailbox_enabled', true);
+        Preferences::set('bill_inbox_mailbox_provider', 'gmail');
+        Preferences::set('bill_inbox_mailbox_email', 'money@example.com');
+        Preferences::set('bill_inbox_mailbox_host', 'imap.gmail.com');
+        Preferences::set('bill_inbox_mailbox_port', 993);
+        Preferences::set('bill_inbox_mailbox_encryption', 'ssl');
+        Preferences::set('bill_inbox_mailbox_username', 'money@example.com');
+        Preferences::setEncrypted('bill_inbox_mailbox_password', 'gmail-app-password');
+        Preferences::set('bill_inbox_mailbox_folder', 'INBOX');
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->getJson(route('api.v1.bill-inbox.settings'));
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.type', 'bill-inbox-settings');
+        $response->assertJsonPath('data.attributes.enabled', true);
+        $response->assertJsonPath('data.attributes.provider', 'gmail');
+        $response->assertJsonPath('data.attributes.email', 'money@example.com');
+        $response->assertJsonPath('data.attributes.has_password', true);
+        $response->assertJsonPath('data.attributes.built_in_channels.0.source', 'alipay');
+        $response->assertJsonPath('data.attributes.built_in_channels.1.source', 'wechat');
+        $response->assertJsonPath('data.attributes.built_in_channels.2.source', 'cmb');
+    }
+
+    public function testUpdatesBillInboxSettings(): void
+    {
+        $this->actingAs($this->user, 'api');
+        $response = $this->putJson(route('api.v1.bill-inbox.settings.update'), [
+            'enabled'  => true,
+            'provider' => 'gmail',
+            'email'    => 'money@example.com',
+            'password' => 'app-password',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.attributes.enabled', true);
+        $response->assertJsonPath('data.attributes.provider', 'gmail');
+        $response->assertJsonPath('data.attributes.email', 'money@example.com');
+        $response->assertJsonPath('data.attributes.host', 'imap.gmail.com');
+        $response->assertJsonPath('data.attributes.port', 993);
+        $response->assertJsonPath('data.attributes.encryption', 'ssl');
+        $response->assertJsonPath('data.attributes.username', 'money@example.com');
+        $response->assertJsonPath('data.attributes.folder', 'INBOX');
+        $response->assertJsonPath('data.attributes.has_password', true);
+
+        $this->assertSame('money@example.com', Preferences::get('bill_inbox_mailbox_email')->data);
+        $this->assertSame('app-password', Preferences::getEncrypted('bill_inbox_mailbox_password')->data);
+        $this->assertSame('', Preferences::get('bill_inbox_quick_gmail_label')->data);
+        $this->assertSame('', Preferences::get('bill_inbox_quick_keywords')->data);
+        $this->assertCount(3, Preferences::get('bill_inbox_processing_rules')->data);
+    }
+
+    public function testSyncBillInboxReturnsMailboxAndProcessingCounts(): void
+    {
+        Preferences::set('bill_inbox_mailbox_enabled', false);
+
+        $task = BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'unknown',
+            'profile_id'  => null,
+            'status'      => 'received',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '未知账单',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-inbox.sync'), ['limit' => 25]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.type', 'bill-inbox-sync-result');
+        $response->assertJsonPath('data.attributes.scanned', 0);
+        $response->assertJsonPath('data.attributes.created', 0);
+        $response->assertJsonPath('data.attributes.processed', 1);
+        $response->assertJsonPath('data.attributes.process_failed', 0);
+
+        $task->refresh();
+        $this->assertSame('unknown', $task->status);
+    }
+
+    public function testProcessesQueuedBillTasks(): void
+    {
+        $otherUser = $this->createUser('other-process@example.com');
+        $otherTask = BillTask::query()->create([
+            'user_id'     => $otherUser->id,
+            'source'      => 'unknown',
+            'profile_id'  => null,
+            'status'      => 'received',
+            'received_at' => Carbon::parse('2026-06-11 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '其他用户未知账单',
+        ]);
+        $task = BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'unknown',
+            'profile_id'  => null,
+            'status'      => 'received',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '未知账单',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-inbox.process'), ['limit' => 10]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.type', 'bill-inbox-process-result');
+        $response->assertJsonPath('data.attributes.processed', 1);
+        $response->assertJsonPath('data.attributes.failed', 0);
+
+        $task->refresh();
+        $otherTask->refresh();
+        $this->assertSame('unknown', $task->status);
+        $this->assertSame('received', $otherTask->status);
+    }
+
+    public function testCleansUpStaleBillInboxTasks(): void
+    {
+        $stale = BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'alipay',
+            'profile_id'  => 'alipay-statement',
+            'status'      => 'needs_secret',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '支付宝交易流水',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-inbox.cleanup-stale'));
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('data.type', 'bill-inbox-cleanup-result');
+        $response->assertJsonPath('data.attributes.archived', 2);
+
+        $this->task->refresh();
+        $stale->refresh();
+        $this->assertSame('cleaned', $this->task->status);
+        $this->assertSame('cleaned', $stale->status);
+    }
+
     public function testImportsStatementRowsIntoFireflyTransactions(): void
     {
         $row = $this->createStatementRow();
@@ -349,6 +542,51 @@ final class BillTaskControllerTest extends TestCase
         $again->assertJsonPath('summary.skipped', 1);
     }
 
+    public function testImportDryRunReturnsCompactRowsByDefault(): void
+    {
+        $row = $this->createStatementRow([
+            'description'         => '为15512345678交费20.00元',
+            'firefly_description' => '为15512345678交费20.00元',
+            'platform_order_no'   => '2026061522001414871443694067',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-tasks.import', ['billTask' => $this->task->id]), [
+            'row_ids' => [$row->id],
+            'confirm' => false,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('summary.total', 1);
+        $response->assertJsonPath('summary.skipped', 1);
+        $response->assertJsonPath('rows.0.row_id', (string) $row->id);
+        $response->assertJsonPath('rows.0.row_number', 1);
+        $response->assertJsonPath('rows.0.status', 'skipped');
+        $response->assertJsonPath('rows.0.description_preview', '为15****78交费20.00元');
+        $response->assertJsonMissingPath('rows.0.payload');
+        $this->assertStringNotContainsString('user_group', $response->getContent());
+        $this->assertStringNotContainsString('2026061522001414871443694067', $response->getContent());
+        $this->assertStringNotContainsString('15512345678', $response->getContent());
+    }
+
+    public function testImportDryRunPayloadIsExplicitAndDoesNotExposeInternalUserObjects(): void
+    {
+        $row = $this->createStatementRow();
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-tasks.import', ['billTask' => $this->task->id]), [
+            'row_ids'         => [$row->id],
+            'confirm'         => false,
+            'include_payload' => true,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('rows.0.payload.transactions.0.type', 'withdrawal');
+        $response->assertJsonMissingPath('rows.0.payload.user');
+        $response->assertJsonMissingPath('rows.0.payload.user_group');
+        $this->assertStringNotContainsString('user_group', $response->getContent());
+    }
+
     public function testImportSkipsRowsWithoutFireflyType(): void
     {
         $row = $this->createStatementRow();
@@ -370,6 +608,86 @@ final class BillTaskControllerTest extends TestCase
         $row->refresh();
         $this->assertSame('pending', $row->status);
         $this->assertNull($row->transaction_group_id);
+    }
+
+    public function testReviewStatementRowsBuildsImportDecisionLists(): void
+    {
+        $this->createAccount('招商银行', 'Asset account');
+        $existing = $this->createStatementRow([
+            'platform_order_no' => '2026061522001414871443600001',
+            'merchant_order_no' => 'CP-existing-0001',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $this->postJson(route('api.v1.bill-tasks.import', ['billTask' => $this->task->id]), [
+            'row_ids' => [$existing->id],
+            'confirm' => true,
+        ])->assertStatus(200);
+
+        $duplicate = $this->createStatementRow([
+            'row_number'        => 2,
+            'platform_order_no' => '2026061522001414871443600001',
+            'merchant_order_no' => 'CP-existing-0001-copy',
+        ]);
+        $transfer = $this->createStatementRow([
+            'row_number'             => 3,
+            'counterparty'           => '李昶乐',
+            'description'            => '向李昶乐转账',
+            'platform_category'      => '转账',
+            'firefly_type'           => 'transfer',
+            'source_name'            => '招商银行',
+            'destination_name'       => '李昶乐',
+            'platform_order_no'      => 'transfer-0001',
+            'merchant_order_no'      => 'transfer-merchant-0001',
+        ]);
+        $needsNote = $this->createStatementRow([
+            'row_number'             => 4,
+            'counterparty'           => '微信转账',
+            'description'            => '微信转账',
+            'platform_category'      => '',
+            'category_name'          => null,
+            'notes'                  => null,
+            'platform_order_no'      => 'needs-note-0001',
+            'merchant_order_no'      => 'needs-note-merchant-0001',
+        ]);
+        $refundExpense = $this->createStatementRow([
+            'row_number'             => 5,
+            'counterparty'           => '测试商户',
+            'description'            => '测试消费',
+            'amount'                 => '20.00',
+            'firefly_amount'         => '20.00',
+            'platform_order_no'      => 'refund-expense-0001',
+            'merchant_order_no'      => 'refund-expense-merchant-0001',
+        ]);
+        $refundIncome = $this->createStatementRow([
+            'row_number'             => 6,
+            'counterparty'           => '测试商户',
+            'description'            => '测试退款',
+            'direction'              => '收入',
+            'amount'                 => '20.00',
+            'firefly_type'           => 'deposit',
+            'firefly_amount'         => '20.00',
+            'source_name'            => '测试商户',
+            'destination_name'       => '招商银行',
+            'platform_order_no'      => 'refund-income-0001',
+            'merchant_order_no'      => 'refund-income-merchant-0001',
+        ]);
+
+        $response = $this->getJson(route('api.v1.bill-tasks.review', ['billTask' => $this->task->id]));
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('summary.total', 6);
+        $response->assertJsonPath('summary.imported', 1);
+        $response->assertJsonPath('summary.pending', 5);
+        $response->assertJsonPath('existing_candidates.0.row_id', (string) $duplicate->id);
+        $response->assertJsonPath('existing_candidates.0.reason', '同订单号已存在 Firefly 交易');
+        $response->assertJsonPath('refund_pairs.0.expense_row_id', (string) $refundExpense->id);
+        $response->assertJsonPath('refund_pairs.0.income_row_id', (string) $refundIncome->id);
+        $body = $response->json();
+        $this->assertContains((string) $transfer->id, array_column($body['transfer_candidates'], 'row_id'));
+        $this->assertContains((string) $needsNote->id, array_column($body['needs_user_note'], 'row_id'));
+        $this->assertStringNotContainsString('2026061522001414871443600001', $response->getContent());
+        $this->assertStringNotContainsString('CP-existing-0001', $response->getContent());
     }
 
     #[Override]
@@ -443,14 +761,18 @@ final class BillTaskControllerTest extends TestCase
         return $user;
     }
 
-    private function createStatementRow(): BillStatementRow
+    /**
+     * @param array<string,mixed> $overrides
+     */
+    private function createStatementRow(array $overrides = []): BillStatementRow
     {
         /** @var BillArtifact $artifact */
         $artifact = $this->task->artifacts()->first();
-        $import   = BillStatementImport::query()->create([
+        $import   = BillStatementImport::query()->firstOrCreate([
+            'bill_artifact_id' => $artifact->id,
+        ], [
             'user_id'           => $this->user->id,
             'bill_task_id'      => $this->task->id,
-            'bill_artifact_id'  => $artifact->id,
             'source'            => 'alipay',
             'profile_id'        => 'alipay-statement',
             'original_filename' => '支付宝交易明细(20260515-20260615).csv',
@@ -462,7 +784,7 @@ final class BillTaskControllerTest extends TestCase
             'status'            => 'parsed',
         ]);
 
-        return BillStatementRow::query()->create([
+        $defaults = [
             'user_id'                  => $this->user->id,
             'bill_task_id'             => $this->task->id,
             'bill_statement_import_id' => $import->id,
@@ -489,7 +811,9 @@ final class BillTaskControllerTest extends TestCase
             'destination_name'         => '中国联通',
             'category_name'            => '充值缴费',
             'tags'                     => ['支付宝'],
-        ]);
+        ];
+
+        return BillStatementRow::query()->create(array_merge($defaults, $overrides));
     }
 
     private function createAccount(string $name, string $type): Account

@@ -1,3 +1,6 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
+
 import { Command } from 'commander';
 
 import { createCommandContext } from '../core/command-context.js';
@@ -18,6 +21,8 @@ interface BillStatementRowListOptions {
   status?: string;
   from?: string;
   to?: string;
+  summary?: boolean;
+  limit?: string;
 }
 
 interface BillStatementRowUpdateOptions {
@@ -28,16 +33,70 @@ interface BillStatementImportCommandOptions {
   all?: boolean;
   rows?: string;
   confirm?: boolean;
+  includePayload?: boolean;
 }
 
 interface BillTaskArchiveOptions {
   ids?: string;
 }
 
+interface BillInboxRunOptions {
+  limit?: string;
+}
+
+interface BillInboxSettingsSetOptions {
+  enabled?: boolean;
+  disabled?: boolean;
+  provider?: string;
+  email?: string;
+  host?: string;
+  port?: string;
+  encryption?: string;
+  username?: string;
+  password?: string;
+  folder?: string;
+}
+
+interface BillArtifactDownloadOptions {
+  output?: string;
+}
+
 export function registerBillInboxCommands(program: Command): void {
   const bills = program
     .command('bill-inbox')
     .description('Manage Firefly bill email ingestion tasks.');
+
+  bills
+    .command('sync')
+    .description('Sync configured bill mailbox messages and process queued tasks.')
+    .option('--limit <count>', 'Maximum number of mailbox messages to scan.')
+    .action(async function (options: BillInboxRunOptions) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.sync(parseOptionalPositiveInteger(options.limit, '--limit'));
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  bills
+    .command('process')
+    .description('Process queued bill inbox tasks without scanning the mailbox.')
+    .option('--limit <count>', 'Maximum number of queued tasks to process.')
+    .action(async function (options: BillInboxRunOptions) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.process(parseOptionalPositiveInteger(options.limit, '--limit'));
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  bills
+    .command('cleanup-stale')
+    .description('Archive stale bill inbox tasks that still wait for a secret.')
+    .action(async function () {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.cleanupStale();
+      console.log(renderOutput(result, { format: context.format }));
+    });
 
   bills
     .command('list')
@@ -72,6 +131,8 @@ export function registerBillInboxCommands(program: Command): void {
     .option('--status <status>', 'Filter rows by import status.')
     .option('--from <date>', 'Only include rows on or after YYYY-MM-DD.')
     .option('--to <date>', 'Only include rows on or before YYYY-MM-DD.')
+    .option('--summary', 'Return compact summary and redacted row previews.')
+    .option('--limit <count>', 'Maximum number of redacted previews when using --summary.')
     .action(async function (taskId: string, options: BillStatementRowListOptions) {
       const context = await createCommandContext(this);
       const service = new BillTaskService(context.client);
@@ -79,8 +140,21 @@ export function registerBillInboxCommands(program: Command): void {
         status: blankToUndefined(options.status),
         from: blankToUndefined(options.from),
         to: blankToUndefined(options.to),
+        summary: options.summary ? true : undefined,
+        limit: parseOptionalPositiveInteger(options.limit, '--limit'),
       });
       console.log(renderOutput(rows, { format: context.format }));
+    });
+
+  bills
+    .command('review')
+    .description('Review parsed statement rows before importing into Firefly.')
+    .argument('<taskId>', 'Bill task identifier.')
+    .action(async function (taskId: string) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const review = await service.review(taskId);
+      console.log(renderOutput(review, { format: context.format }));
     });
 
   const row = bills.command('row').description('Inspect or edit a parsed statement row.');
@@ -114,6 +188,7 @@ export function registerBillInboxCommands(program: Command): void {
     .option('--all', 'Import all importable rows for the task.')
     .option('--rows <ids>', 'Comma-separated statement row IDs to import.')
     .option('--confirm', 'Actually create Firefly transactions. Without this, performs a dry run.')
+    .option('--include-payload', 'Include sanitized Firefly transaction payloads in dry-run output.')
     .action(async function (taskId: string, options: BillStatementImportCommandOptions) {
       if (options.all && options.rows) {
         throw new FireflyInputError('Use either --all or --rows, not both.');
@@ -128,6 +203,7 @@ export function registerBillInboxCommands(program: Command): void {
         all: options.all,
         rowIds: options.rows ? parseIdList(options.rows, '--rows') : undefined,
         confirm: options.confirm ?? false,
+        includePayload: options.includePayload ?? false,
       });
       console.log(renderOutput(result, { format: context.format }));
     });
@@ -162,6 +238,34 @@ export function registerBillInboxCommands(program: Command): void {
       const service = new BillTaskService(context.client);
       const artifacts = await service.artifacts(taskId);
       console.log(renderOutput(artifacts, { format: context.format }));
+    });
+
+  const artifact = bills.command('artifact').description('Inspect or download a bill artifact.');
+  artifact
+    .command('download')
+    .description('Download a bill artifact to a local file.')
+    .argument('<artifactId>', 'Bill artifact identifier.')
+    .requiredOption('--output <file>', 'Local output file path.')
+    .action(async function (artifactId: string, options: BillArtifactDownloadOptions) {
+      if (!options.output) {
+        throw new FireflyInputError('Pass --output to choose where to save the artifact.');
+      }
+
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const bytes = await service.downloadArtifact(artifactId);
+      await mkdir(dirname(options.output), { recursive: true });
+      await writeFile(options.output, Buffer.from(bytes));
+      console.log(
+        renderOutput(
+          {
+            artifact_id: artifactId,
+            output: options.output,
+            bytes: bytes.byteLength,
+          },
+          { format: context.format },
+        ),
+      );
     });
 
   bills
@@ -212,6 +316,37 @@ export function registerBillInboxCommands(program: Command): void {
       const result = await service.submitSecret(taskId, options.value);
       console.log(renderOutput(result, { format: context.format }));
     });
+
+  const settings = bills.command('settings').description('Show or update bill inbox mailbox settings.');
+  settings
+    .command('show')
+    .description('Show configured bill inbox mailbox settings.')
+    .action(async function () {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.settings();
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  settings
+    .command('set')
+    .description('Update bill inbox mailbox settings.')
+    .option('--enabled', 'Enable bill mailbox sync.')
+    .option('--disabled', 'Disable bill mailbox sync.')
+    .option('--provider <provider>', 'Mailbox provider: gmail or imap.')
+    .option('--email <email>', 'Mailbox email address.')
+    .option('--host <host>', 'IMAP host.')
+    .option('--port <port>', 'IMAP port.')
+    .option('--encryption <mode>', 'IMAP encryption: none, ssl, tls, or starttls.')
+    .option('--username <username>', 'Mailbox username.')
+    .option('--password <password>', 'Mailbox password or app password.')
+    .option('--folder <folder>', 'Mailbox folder, defaults to INBOX.')
+    .action(async function (options: BillInboxSettingsSetOptions) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.updateSettings(parseSettingsUpdate(options));
+      console.log(renderOutput(result, { format: context.format }));
+    });
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -245,6 +380,46 @@ function parseIdList(value: string, option: string): number[] {
     throw new FireflyInputError(`Pass at least one numeric ID to ${option}.`);
   }
   return ids;
+}
+
+function parseOptionalPositiveInteger(value: string | undefined, option: string): number | undefined {
+  if (undefined === value || '' === value.trim()) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new FireflyInputError(`${option} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parseSettingsUpdate(options: BillInboxSettingsSetOptions): Record<string, string | number | boolean> {
+  if (options.enabled && options.disabled) {
+    throw new FireflyInputError('Use either --enabled or --disabled, not both.');
+  }
+
+  const payload: Record<string, string | number | boolean> = {};
+  if (options.enabled) {
+    payload.enabled = true;
+  }
+  if (options.disabled) {
+    payload.enabled = false;
+  }
+  for (const key of ['provider', 'email', 'host', 'encryption', 'username', 'password', 'folder'] as const) {
+    const value = options[key];
+    if (undefined !== value && '' !== value.trim()) {
+      payload[key] = value;
+    }
+  }
+  if (undefined !== options.port && '' !== options.port.trim()) {
+    payload.port = parseOptionalPositiveInteger(options.port, '--port') as number;
+  }
+  if (Object.keys(payload).length === 0) {
+    throw new FireflyInputError('Pass at least one setting option to update.');
+  }
+
+  return payload;
 }
 
 function blankToUndefined(value?: string): string | undefined {

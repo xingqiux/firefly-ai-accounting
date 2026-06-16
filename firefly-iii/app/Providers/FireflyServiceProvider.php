@@ -55,6 +55,7 @@ use FireflyIII\Repositories\Webhook\WebhookRepository;
 use FireflyIII\Repositories\Webhook\WebhookRepositoryInterface;
 use FireflyIII\Services\BillIngestion\BillSourceChannelRegistry;
 use FireflyIII\Services\BillIngestion\Channels\AlipayBillSourceChannel;
+use FireflyIII\Services\BillIngestion\Channels\CmbTransactionBillSourceChannel;
 use FireflyIII\Services\BillIngestion\Channels\WechatPayBillSourceChannel;
 use FireflyIII\Services\BillIngestion\ImapBillMailboxClient;
 use FireflyIII\Services\BillIngestion\NativeImapBillMailboxClient;
@@ -131,6 +132,7 @@ class FireflyServiceProvider extends ServiceProvider
             static fn (): BillSourceChannelRegistry => new BillSourceChannelRegistry([
                 app(AlipayBillSourceChannel::class),
                 app(WechatPayBillSourceChannel::class),
+                app(CmbTransactionBillSourceChannel::class),
             ])
         );
 

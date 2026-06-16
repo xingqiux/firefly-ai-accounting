@@ -44,9 +44,11 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame([
             'FROM "service@mail.alipay.com"',
             'FROM "wechatpay@tencent.com"',
+            'FROM "95555@message.cmbchina.com"',
         ], $registry->mailboxSearchCriteria());
         $this->assertSame('alipay', $registry->find('alipay', 'alipay-statement')?->source());
         $this->assertSame('wechat', $registry->find('wechat', 'wechat-pay-statement')?->source());
+        $this->assertSame('cmb', $registry->find('cmb', 'cmb-transaction-statement')?->source());
     }
 
     public function testSyncCreatesAlipayTaskFromConfiguredGmailMailbox(): void
@@ -135,6 +137,49 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertArrayNotHasKey('encrypted_file_data', $task->metadata['remote_file']);
     }
 
+    public function testSyncCreatesCmbTaskFromEncryptedAttachmentMail(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient([
+            new FakeImapMailMessage('95', $this->cmbRawMessage()),
+        ]);
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox();
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+
+        $this->assertSame(1, $result->scanned);
+        $this->assertSame(1, $result->created);
+        $this->assertSame(0, $result->failed);
+        $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
+        $this->assertSame(['95'], $client->seenUids);
+
+        $mail = BillMailMessage::query()->first();
+        $this->assertSame('<cmb-transaction-statement-20260616@cmbchina.com>', $mail->message_id);
+        $this->assertSame('95555@message.cmbchina.com', $mail->from_address);
+        $this->assertSame('招商银行交易流水', $mail->subject);
+        $this->assertNotNull($mail->body_text_path);
+        Storage::disk('local')->assertExists($mail->body_text_path);
+
+        $task = BillTask::query()->first();
+        $this->assertSame('cmb', $task->source);
+        $this->assertSame('cmb-transaction-statement', $task->profile_id);
+        $this->assertSame('received', $task->status);
+        $this->assertSame('招商银行交易流水', $task->summary);
+        $this->assertSame('cmb_app_statement_record', $task->metadata['password_source']);
+        $this->assertSame('95555@message.cmbchina.com', $task->metadata['sender']);
+        $this->assertSame('2026-06-16 17:44:37', $task->metadata['applied_at']);
+
+        $artifact = BillArtifact::query()->first();
+        $this->assertSame($task->id, $artifact->bill_task_id);
+        $this->assertSame('zip', $artifact->kind);
+        $this->assertStringEndsWith('.zip', (string) $artifact->filename);
+        $this->assertTrue($artifact->encrypted);
+        $this->assertSame('cmb_app_statement_record', $artifact->metadata['password_source']);
+        $this->assertNotNull($artifact->path);
+        Storage::disk('local')->assertExists($artifact->path);
+    }
+
     public function testSyncSkipsDuplicateMessages(): void
     {
         Storage::fake('local');
@@ -179,6 +224,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame(['INBOX'], $client->selectedFolders);
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
+        $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
     }
 
     public function testBuiltInAlipayChannelDoesNotDependOnCustomProcessingRules(): void
@@ -204,6 +250,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertSame(['INBOX'], $client->selectedFolders);
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
+        $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
     }
 
     public function testSyncDoesNothingWhenMailboxIsDisabled(): void
@@ -322,6 +369,34 @@ HTML;
             ->html($html)
         ;
         $email->getHeaders()->addIdHeader('Message-ID', 'wechat-pay-statement-20260615@tencent.com');
+
+        return $email->toString();
+    }
+
+    private function cmbRawMessage(): string
+    {
+        $text = <<<TEXT
+尊敬的李昶乐：
+
+您好！附件是您2026年06月16日17:44:37通过招商银行App申请的电子版交易流水，请查收。
+
+基于安全考虑，附件已加密，解压码请通过“招商银行App-流水打印-申请记录“查询，如您存在多条申请记录，请使用与本条记录申请时间对应的解压码解压。
+
+温馨提示：您下载的是压缩文件，建议从电脑端解压查阅。
+
+招商银行
+2026年06月16日
+TEXT;
+
+        $email = (new \Symfony\Component\Mime\Email())
+            ->from('招商银行 <95555@message.cmbchina.com>')
+            ->to('ziyufg@gmail.com')
+            ->subject('招商银行交易流水')
+            ->date(new \DateTimeImmutable('2026-06-16 17:45:00 +0800'))
+            ->text($text)
+            ->attach('cmb encrypted zip bytes', '交易流水(申请时间2026年06月16日17时44分37秒).zip', 'application/zip')
+        ;
+        $email->getHeaders()->addIdHeader('Message-ID', 'cmb-transaction-statement-20260616@cmbchina.com');
 
         return $email->toString();
     }

@@ -6,11 +6,14 @@ namespace FireflyIII\Api\V1\Controllers\Models\BillTask;
 
 use FireflyIII\Api\V1\Controllers\Controller;
 use FireflyIII\Models\BillTask;
+use FireflyIII\Services\BillIngestion\BillStatementRowSummaryService;
 use Illuminate\Http\JsonResponse;
 
 final class ListController extends Controller
 {
     use BillTaskResponse;
+
+    public function __construct(private readonly BillStatementRowSummaryService $rowSummaryService) {}
 
     public function artifacts(BillTask $billTask): JsonResponse
     {
@@ -24,10 +27,21 @@ final class ListController extends Controller
 
     public function rows(BillTask $billTask): JsonResponse
     {
+        $filters = [
+            'status' => (string) request()->query('status', ''),
+            'from'   => (string) request()->query('from', ''),
+            'to'     => (string) request()->query('to', ''),
+            'limit'  => max(1, (int) request()->query('limit', 20)),
+        ];
+
+        if (request()->boolean('summary')) {
+            return response()->json($this->rowSummaryService->summarizeTaskRows(auth()->user(), $billTask->id, $filters));
+        }
+
         $query  = $billTask->statementRows()->orderBy('occurred_at', 'desc')->orderBy('row_number');
-        $status = (string) request()->query('status', '');
-        $from   = (string) request()->query('from', '');
-        $to     = (string) request()->query('to', '');
+        $status = $filters['status'];
+        $from   = $filters['from'];
+        $to     = $filters['to'];
         if ('' !== $status) {
             $query->where('status', $status);
         }
@@ -39,5 +53,10 @@ final class ListController extends Controller
         }
 
         return response()->json($this->rowCollectionResponse($query->get()));
+    }
+
+    public function review(BillTask $billTask): JsonResponse
+    {
+        return response()->json($this->rowSummaryService->reviewTaskRows(auth()->user(), $billTask->id));
     }
 }

@@ -11,6 +11,7 @@ use FireflyIII\Models\BillStatementImport;
 use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillTaskProcessor;
+use FireflyIII\Services\BillIngestion\CmbStatementImportService;
 use FireflyIII\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -153,6 +154,113 @@ final class BillTaskProcessorTest extends TestCase
         Storage::disk('local')->assertExists($artifact->path);
         $this->assertSame('wechat encrypted zip bytes', Storage::disk('local')->get($artifact->path));
         Http::assertSentCount(1);
+    }
+
+    public function testCmbEncryptedTaskRequestsAppStatementPassword(): void
+    {
+        $task = $this->createTask('received', 'cmb', 'cmb-transaction-statement');
+        BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => '招商银行交易流水.zip',
+            'encrypted'    => true,
+            'metadata'     => ['password_source' => 'cmb_app_statement_record'],
+        ]);
+
+        $result = app(BillTaskProcessor::class)->processBatch(10);
+
+        $this->assertSame(1, $result->processed);
+        $this->assertSame(0, $result->failed);
+
+        $task->refresh();
+        $this->assertSame('needs_secret', $task->status);
+        $this->assertSame('请输入招商银行App“流水打印-申请记录”中的账单解压码', $task->currentSecretChallenge->prompt);
+    }
+
+    public function testCmbReadyTaskWithSecretExtractsZipWithoutImportRowsYet(): void
+    {
+        Storage::fake('local');
+        $task    = $this->createTask('ready', 'cmb', 'cmb-transaction-statement');
+        $zipPath = 'bill-inbox/1/20260616174500000/attachments/01-cmb-statement.zip';
+        Storage::disk('local')->put($zipPath, $this->encryptedZipBytes('zip-secret', '招商银行交易流水明细', 'cmb-statement.xlsx'));
+        $zip     = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => '招商银行交易流水.zip',
+            'path'         => $zipPath,
+            'encrypted'    => true,
+            'metadata'     => ['password_source' => 'cmb_app_statement_record'],
+        ]);
+
+        $processed = app(BillTaskProcessor::class)->process($task, 'zip-secret');
+
+        $this->assertTrue($processed);
+
+        $task->refresh();
+        $this->assertSame('parsed', $task->status);
+        $this->assertSame(1, $task->metadata['parsed_artifact_count']);
+
+        $artifact = $task->artifacts()->where('derived_from_artifact_id', $zip->id)->first();
+        $this->assertInstanceOf(BillArtifact::class, $artifact);
+        $this->assertSame('xlsx', $artifact->kind);
+        $this->assertSame('cmb-statement.xlsx', $artifact->filename);
+        $this->assertSame('cmb_zip_extract', $artifact->metadata['source']);
+        $this->assertFalse($artifact->encrypted);
+        Storage::disk('local')->assertExists($artifact->path);
+
+        $this->assertSame(0, BillStatementImport::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->count());
+    }
+
+    public function testCmbStatementPdfTextParsesIntoEditableImportRows(): void
+    {
+        Storage::fake('local');
+        $task = $this->createTask('parsed', 'cmb', 'cmb-transaction-statement');
+        $path = 'bill-inbox/1/derived/cmb-statement.pdf';
+        Storage::disk('local')->put($path, $this->cmbStatementPdfText());
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'pdf',
+            'filename'     => '招商银行交易流水.pdf',
+            'path'         => $path,
+            'encrypted'    => false,
+            'metadata'     => ['source' => 'cmb_zip_extract'],
+        ]);
+
+        $import = app(CmbStatementImportService::class)->importExtractedText($artifact, $this->cmbStatementPdfText());
+
+        $this->assertSame('cmb', $import->source);
+        $this->assertSame('cmb-transaction-statement', $import->profile_id);
+        $this->assertSame('2026-06-16 17:44:37', $import->exported_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-06-01', $import->period_start->format('Y-m-d'));
+        $this->assertSame('2026-06-14', $import->period_end->format('Y-m-d'));
+        $this->assertSame(4, $import->row_count);
+        $this->assertSame('cmb-transaction-202606161744-20260601_20260614.pdf', $import->archived_filename);
+
+        $first = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $first);
+        $this->assertSame('2026-06-01 00:00:00', $first->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame('快捷支付', $first->platform_category);
+        $this->assertSame('上海公共交通卡股份有限公司', $first->counterparty);
+        $this->assertSame('支出', $first->direction);
+        $this->assertSame('5', (string) $first->amount);
+        $this->assertSame('招商银行储蓄卡(8705)', $first->source_name);
+        $this->assertSame('上海公共交通卡股份有限公司', $first->destination_name);
+
+        $split = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderByDesc('row_number')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $split);
+        $this->assertSame('拉扎斯网络科技（上海）有限公司', $split->counterparty);
+        $this->assertSame('支出', $split->direction);
+        $this->assertSame('12.51', (string) $split->amount);
+
+        $income = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->where('direction', '收入')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $income);
+        $this->assertSame('李昶乐', $income->source_name);
+        $this->assertSame('招商银行储蓄卡(8705)', $income->destination_name);
+
+        $artifact->refresh();
+        $this->assertSame('cmb-transaction-202606161744-20260601_20260614.pdf', $artifact->filename);
+        Storage::disk('local')->assertExists('bill-inbox/'.$task->id.'/derived/cmb-transaction-202606161744-20260601_20260614.pdf');
     }
 
     public function testAlipayReadyTaskWithoutSecretRequestsPasswordAgain(): void
@@ -472,6 +580,38 @@ CSV, 'GB18030', 'UTF-8');
 2026-06-15 18:00:00,餐饮美食,霸王茶姬,轻乳茶,支出,16.00,招商银行储蓄卡(8705),支付成功,420000000000000001,merchant-1,
 2026-06-15 08:30:00,转账红包,李四,微信转账,收入,50.00,零钱,已收钱,420000000000000002,merchant-2,
 CSV, 'UTF-8', 'UTF-8');
+    }
+
+    private function cmbStatementPdfText(): string
+    {
+        return <<<'TEXT'
+                                                 招商银行交易流水
+                                   Transaction Statement of China Merchants Bank
+                                             2026-06-01 -- 2026-06-14
+
+
+户      名：李昶乐                                        账号：6214********8705
+Name                                                Account No
+申请时间：2026-06-16 17:44:37                            验 证 码：EF92MHFC
+Date                                                Verification Code
+
+记账日期           货币         交易金额              联机余额             交易摘要                  对手信息
+                          Transaction
+Date           Currency                     Balance          Transaction Type      Counter Party
+                          Amount
+2026-06-01     CNY        -5.00             132.24           快捷支付                  上海公共交通卡股份有限公司
+
+2026-06-02     CNY        100.00            124.34           网联收款                  李昶乐
+
+                                                                                   拉扎斯网络科技（上海）有限公
+2026-06-04     CNY        -15.59            66.75            快捷支付
+                                                                                   司
+
+                                                                   拉扎斯网络科技（上海）有限公
+2026-06-04   CNY        -12.51        5.94      快捷支付
+                                                                   司
+
+TEXT;
     }
 
     private function wechatStatementXlsx(): string
