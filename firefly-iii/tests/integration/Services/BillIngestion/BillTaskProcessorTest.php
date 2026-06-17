@@ -177,6 +177,29 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('请输入招商银行App“流水打印-申请记录”中的账单解压码', $task->currentSecretChallenge->prompt);
     }
 
+    public function testBocReadyTaskWithSecretWaitsForPdfMapping(): void
+    {
+        $task = $this->createTask('ready', 'boc', 'boc-transaction-statement');
+        BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'pdf',
+            'filename'     => 'KA020003687d1a432d8001.pdf',
+            'encrypted'    => true,
+            'metadata'     => ['password_source' => 'boc_app_statement_record'],
+        ]);
+
+        $processed = app(BillTaskProcessor::class)->process($task, 'open-secret');
+
+        $this->assertTrue($processed);
+
+        $task->refresh();
+        $this->assertSame('parsed', $task->status);
+        $this->assertSame('waiting_for_pdf_mapping', $task->metadata['parser_status']);
+        $this->assertSame('task.parsed', $task->events()->latest('id')->first()->event_type);
+        $this->assertSame(0, BillStatementImport::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->count());
+    }
+
     public function testCmbReadyTaskWithSecretExtractsZipWithoutImportRowsYet(): void
     {
         Storage::fake('local');

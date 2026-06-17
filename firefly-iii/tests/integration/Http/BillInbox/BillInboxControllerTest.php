@@ -40,41 +40,108 @@ final class BillInboxControllerTest extends TestCase
     private User $user;
     private BillTask $task;
 
-    public function testIndexShowsBillTasks(): void
+    public function testIndexShowsSourceChannelsInsteadOfMailTaskRows(): void
     {
+        BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'alipay',
+            'profile_id'  => 'alipay-statement',
+            'status'      => 'parsed',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '支付宝交易流水明细',
+        ]);
+
         $response = $this->actingAs($this->user)->get(route('bill-inbox.index'));
 
         $response->assertStatus(200);
         $response->assertSee('账单收件箱');
-        $response->assertSee('招商银行信用卡电子账单');
+        $response->assertSee('支付宝交易流水');
+        $response->assertSee('微信支付账单流水');
+        $response->assertSee('招商银行交易流水');
+        $response->assertSee('中国银行交易流水');
         $response->assertSee('需要验证码');
-        $response->assertSee('归档');
+        $response->assertSee('待处理');
+        $response->assertSee('处理失败');
+        $response->assertSee('已解析');
+        $response->assertSee('待存入');
+        $response->assertSee('最近状态');
+        $response->assertSee('进入');
         $response->assertDontSeeText('needs_secret');
+        $response->assertDontSee('邮件/摘要');
+        $response->assertDontSee('招商银行信用卡电子账单');
         $response->assertDontSee('立即同步');
         $response->assertDontSee('这里显示从邮箱识别出的账单任务');
+        $response->assertDontSee('提交后系统只记录挑战已处理');
+        $response->assertDontSee('明文密码');
     }
 
-    public function testIndexAllowsSubmittingSecretFromTaskRow(): void
+    public function testSidebarKeepsTreeMenusExpandedAndHidesDisabledWebhookEntry(): void
     {
         $response = $this->actingAs($this->user)->get(route('bill-inbox.index'));
 
         $response->assertStatus(200);
+
+        $html = $response->getContent();
+
+        $this->assertSame(5, substr_count($html, 'treeview menu-open'));
+        $this->assertSame(5, substr_count($html, 'treeview-menu" style="display: block;"'));
+        $this->assertStringNotContainsString('fa-angle-left pull-right', $html);
+        $this->assertStringNotContainsString('fa-angle-right fa-fw', $html);
+        $this->assertStringContainsString('bill-sidebar-treeview-menu', $html);
+        $this->assertStringContainsString('padding-left: 35px;', file_get_contents(public_path('v1/css/firefly.css')));
+        $response->assertDontSee('Webhook (disabled)');
+        $response->assertDontSee('Webhook（已禁用）');
+        $response->assertDontSee('webhooks_menu_disabled');
+    }
+
+    public function testChannelPageAllowsSubmittingSecretFromTaskRow(): void
+    {
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.channel', ['source' => 'cmb']));
+
+        $response->assertStatus(200);
+        $response->assertSee('招商银行交易流水');
+        $response->assertSee('招商银行信用卡电子账单');
         $response->assertSee(sprintf('id="bill-secret-%d"', $this->task->id), false);
         $response->assertSee(sprintf('form="bill-secret-%d"', $this->task->id), false);
         $response->assertSee(sprintf('action="%s"', route('bill-inbox.secret', [$this->task->id])), false);
         $response->assertSee('name="value"', false);
         $response->assertSee('autocomplete="one-time-code"', false);
         $response->assertSee('提交', false);
-        $response->assertSee('name="redirect_to" value="index"', false);
+        $response->assertSee('name="redirect_to" value="channel"', false);
+        $response->assertSee('name="source" value="cmb"', false);
         $response->assertDontSee('提交后系统只记录挑战已处理');
         $response->assertDontSee('明文密码');
 
         $post = $this->post(route('bill-inbox.secret', [$this->task->id]), [
             'value'       => '123456',
-            'redirect_to' => 'index',
+            'redirect_to' => 'channel',
+            'source'      => 'cmb',
         ]);
 
-        $post->assertRedirect(route('bill-inbox.index'));
+        $post->assertRedirect(route('bill-inbox.channel', ['source' => 'cmb']));
+    }
+
+    public function testChannelPageShowsTasksForSingleSource(): void
+    {
+        BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'alipay',
+            'profile_id'  => 'alipay-statement',
+            'status'      => 'parsed',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '支付宝交易流水明细',
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.channel', ['source' => 'alipay']));
+
+        $response->assertStatus(200);
+        $response->assertSee('支付宝交易流水');
+        $response->assertSee('支付宝交易流水明细');
+        $response->assertSee('批次');
+        $response->assertDontSee('招商银行信用卡电子账单');
+        $response->assertDontSeeText('needs_secret');
+        $response->assertDontSee('提交后系统只记录挑战已处理');
+        $response->assertDontSee('明文密码');
     }
 
     public function testIndexShowsMailboxConfigurationStatus(): void
@@ -97,6 +164,7 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('INBOX');
         $response->assertSee('支付宝交易流水');
         $response->assertSee('微信支付账单流水');
+        $response->assertSee('中国银行交易流水');
         $response->assertDontSee('buii');
         $response->assertDontSee('账单, statement');
         $response->assertSee('应用密码已保存');
@@ -114,7 +182,6 @@ final class BillInboxControllerTest extends TestCase
         $response = $this->get(route('bill-inbox.index'));
 
         $response->assertStatus(200);
-        $response->assertSee('立即同步');
         $response->assertDontSee('自动同步：');
         $this->assertFalse($client->connected);
         $this->assertSame([], $client->searches);
@@ -139,7 +206,7 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('已归档');
         $response->assertDontSeeText('cleaned');
 
-        $filtered = $this->get(route('bill-inbox.index', ['status' => 'cleaned']));
+        $filtered = $this->get(route('bill-inbox.channel', ['source' => 'alipay', 'status' => 'cleaned']));
 
         $filtered->assertStatus(200);
         $filtered->assertSee('已清理支付宝交易流水');
@@ -175,12 +242,9 @@ final class BillInboxControllerTest extends TestCase
             'summary'     => '已归档招商流水',
         ]);
 
-        $response = $this->actingAs($this->user)->get(route('bill-inbox.index', ['status' => 'cleaned']));
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.channel', ['source' => 'cmb', 'status' => 'cleaned']));
 
         $response->assertStatus(200);
-        $response->assertSee('已解析 <span class="label label-primary">1</span>', false);
-        $response->assertSee('待处理 <span class="label label-warning">1</span>', false);
-        $response->assertSee('已归档 <span class="label label-default">1</span>', false);
         $response->assertSee('<span class="label label-default">已归档</span>', false);
     }
 
@@ -254,6 +318,20 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('流水明细');
         $response->assertSee('中国联通');
         $response->assertSee('招商银行储蓄卡(8705)');
+        $response->assertSee('原始流水');
+        $response->assertSee('Firefly 草稿');
+        $response->assertSee('来源：招商银行');
+        $response->assertSee('目标：中国联通');
+        $response->assertSee('分类：充值缴费');
+        $response->assertSee('描述：为155****2328交费20.00元');
+        $response->assertSee('金额：14.95');
+        $response->assertSee('类型：支出');
+        $response->assertSee('>支出</option>', false);
+        $response->assertSee('>收入</option>', false);
+        $response->assertSee('>转账</option>', false);
+        $response->assertDontSee('类型：withdrawal');
+        $response->assertDontSee('>withdrawal</option>', false);
+        $response->assertDontSee('>deposit</option>', false);
         $response->assertSee('存入');
         $response->assertSee('筛选');
         $response->assertSee('批量存入');
@@ -395,6 +473,7 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('内置渠道');
         $response->assertSee('支付宝交易流水');
         $response->assertSee('微信支付账单流水');
+        $response->assertSee('中国银行交易流水');
         $response->assertSee('Gmail');
         $response->assertSee('高级设置');
         $response->assertDontSee('只处理这些邮件');
@@ -424,7 +503,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('ssl', Preferences::get('bill_inbox_mailbox_encryption')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(3, $rules);
+        $this->assertCount(4, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -447,6 +526,13 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame(['招商银行', '交易流水'], $rules[2]['keywords']);
         $this->assertTrue($rules[2]['built_in']);
         $this->assertTrue($rules[2]['enabled']);
+        $this->assertSame('中国银行交易流水', $rules[3]['name']);
+        $this->assertSame('boc', $rules[3]['source']);
+        $this->assertSame('', $rules[3]['from_contains']);
+        $this->assertSame('中国银行交易流水', $rules[3]['subject_contains']);
+        $this->assertSame(['中国银行', '交易流水'], $rules[3]['keywords']);
+        $this->assertTrue($rules[3]['built_in']);
+        $this->assertTrue($rules[3]['enabled']);
         $this->assertSame('', Preferences::get('bill_inbox_quick_gmail_label')->data);
         $this->assertSame('', Preferences::get('bill_inbox_quick_keywords')->data);
     }
@@ -619,7 +705,7 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('INBOX', Preferences::get('bill_inbox_mailbox_folder')->data);
 
         $rules = Preferences::get('bill_inbox_processing_rules')->data;
-        $this->assertCount(3, $rules);
+        $this->assertCount(4, $rules);
         $this->assertSame('支付宝交易流水', $rules[0]['name']);
         $this->assertSame('alipay', $rules[0]['source']);
         $this->assertSame('service@mail.alipay.com', $rules[0]['from_contains']);
@@ -644,6 +730,14 @@ final class BillInboxControllerTest extends TestCase
         $this->assertSame('', $rules[2]['gmail_label']);
         $this->assertTrue($rules[2]['built_in']);
         $this->assertTrue($rules[2]['enabled']);
+        $this->assertSame('中国银行交易流水', $rules[3]['name']);
+        $this->assertSame('boc', $rules[3]['source']);
+        $this->assertSame('', $rules[3]['from_contains']);
+        $this->assertSame('中国银行交易流水', $rules[3]['subject_contains']);
+        $this->assertSame(['pdf'], $rules[3]['attachment_extensions']);
+        $this->assertSame('', $rules[3]['gmail_label']);
+        $this->assertTrue($rules[3]['built_in']);
+        $this->assertTrue($rules[3]['enabled']);
     }
 
     private function alipayRawMessage(): string

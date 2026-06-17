@@ -142,12 +142,8 @@
                                 <tr>
                                     <th style="width: 36px;"></th>
                                     <th>时间</th>
-                                    <th>分类</th>
-                                    <th>交易对方</th>
-                                    <th>说明</th>
-                                    <th>收/支</th>
-                                    <th>金额</th>
-                                    <th>付款方式</th>
+                                    <th>原始流水</th>
+                                    <th>Firefly 草稿</th>
                                     <th>状态</th>
                                     <th style="width: 150px;">操作</th>
                                 </tr>
@@ -161,12 +157,21 @@
                                             {% endif %}
                                         </td>
                                         <td>{% if row.occurred_at %}{{ row.occurred_at.format('Y-m-d H:i') }}{% else %}-{% endif %}</td>
-                                        <td>{{ row.platform_category|default('-') }}</td>
-                                        <td>{{ row.counterparty|default('-') }}</td>
-                                        <td>{{ row.description|default('-') }}</td>
-                                        <td>{{ row.direction|default('-') }}</td>
-                                        <td>{{ row.amount|default('-') }}</td>
-                                        <td>{{ row.payment_method|default('-') }}</td>
+                                        <td>
+                                            <div><strong>{{ row.counterparty|default('-') }}</strong></div>
+                                            <div>分类：{{ row.platform_category|default('-') }}</div>
+                                            <div>说明：{{ row.description|default('-') }}</div>
+                                            <div>收/支：{{ row.direction|default('-') }} / 金额：{{ row.amount|default('-') }}</div>
+                                            <div class="text-muted">付款方式：{{ row.payment_method|default('-') }}</div>
+                                        </td>
+                                        <td>
+                                            <div><strong>{{ row.firefly_description|default('-') }}</strong></div>
+                                            <div>来源：{{ row.source_name|default('-') }}</div>
+                                            <div>目标：{{ row.destination_name|default('-') }}</div>
+                                            <div>分类：{{ row.category_name|default('-') }}</div>
+                                            <div>描述：{{ row.firefly_description|default('-') }}</div>
+                                            <div>类型：{{ fireflyTypeLabels[row.firefly_type]|default('-') }} / 金额：{{ row.firefly_amount|default('-') }}</div>
+                                        </td>
                                         <td><span class="label {{ statusClasses[row.status]|default('label-info') }}">{{ statusLabels[row.status]|default(row.status) }}</span></td>
                                         <td>
                                             <a class="btn btn-xs btn-default" data-toggle="collapse" href="#bill-row-{{ row.id }}">
@@ -184,7 +189,7 @@
                                         </td>
                                     </tr>
                                     <tr id="bill-row-{{ row.id }}" class="collapse">
-                                        <td colspan="10">
+                                        <td colspan="6">
                                             <form method="POST" action="{{ route('bill-inbox.row.update', [row.id]) }}" class="form-horizontal">
                                                 <input type="hidden" name="_token" value="{{ csrf_token() }}">
                                                 <div class="row">
@@ -197,7 +202,15 @@
                                                     <div class="col-sm-3"><label>收/支</label><input class="form-control" name="direction" value="{{ row.direction }}"></div>
                                                     <div class="col-sm-3"><label>付款方式</label><input class="form-control" name="payment_method" value="{{ row.payment_method }}"></div>
                                                     <div class="col-sm-3"><label>交易状态</label><input class="form-control" name="transaction_status" value="{{ row.transaction_status }}"></div>
-                                                    <div class="col-sm-3"><label>Firefly 类型</label><input class="form-control" name="firefly_type" value="{{ row.firefly_type }}"></div>
+                                                    <div class="col-sm-3">
+                                                        <label>Firefly 类型</label>
+                                                        <select class="form-control" name="firefly_type">
+                                                            <option value="">不导入</option>
+                                                            {% for type, label in fireflyTypeLabels %}
+                                                                <option value="{{ type }}" {% if row.firefly_type == type %}selected{% endif %}>{{ label }}</option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
                                                 </div>
                                                 <div class="row" style="margin-top: 10px;">
                                                     <div class="col-sm-3"><label>来源账户</label><input class="form-control" name="source_name" value="{{ row.source_name }}"></div>

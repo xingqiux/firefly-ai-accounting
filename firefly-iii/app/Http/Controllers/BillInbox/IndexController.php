@@ -45,10 +45,29 @@ class IndexController extends Controller
 
     public function index(Request $request): Factory|View
     {
+        Log::channel('audit')->info('User visits bill inbox index page.');
+
+        return view('bill-inbox.index', [
+            'sourceChannels' => $this->sourceChannels(),
+            'mailboxStatus'  => $this->mailboxStatus(),
+            'builtInChannels'=> $this->channelRegistry->settingsChannels(),
+            'statusLabels'   => $this->statusLabels(),
+            'statusClasses'  => $this->statusClasses(),
+        ]);
+    }
+
+    public function channel(Request $request, string $source): Factory|View
+    {
+        $channel = $this->sourceChannel($source);
+        if (null === $channel) {
+            throw new NotFoundHttpException();
+        }
+
         $status = (string) $request->query('status', '');
         $query  = BillTask::query()
             ->where('user_id', auth()->id())
-            ->with(['mailMessage', 'currentSecretChallenge', 'statementRows'])
+            ->where('source', $source)
+            ->with(['artifacts', 'mailMessage', 'currentSecretChallenge', 'statementRows'])
             ->orderByDesc('received_at')
             ->orderByDesc('id')
         ;
@@ -62,22 +81,22 @@ class IndexController extends Controller
         $tasks = $query->paginate(25)->withQueryString();
         $stats = BillTask::query()
             ->where('user_id', auth()->id())
+            ->where('source', $source)
             ->selectRaw('status, count(*) as total')
             ->groupBy('status')
             ->pluck('total', 'status')
             ->toArray()
         ;
 
-        Log::channel('audit')->info('User visits bill inbox index page.');
+        Log::channel('audit')->info(sprintf('User visits bill inbox channel "%s" page.', $source));
 
-        return view('bill-inbox.index', [
+        return view('bill-inbox.channel', [
+            'channel'       => $channel,
             'tasks'         => $tasks,
             'stats'         => $stats,
             'currentStatus' => $status,
-            'mailboxStatus' => $this->mailboxStatus(),
             'statusLabels'   => $this->statusLabels(),
             'statusClasses'  => $this->statusClasses(),
-            'builtInChannels'=> $this->channelRegistry->settingsChannels(),
         ]);
     }
 
@@ -124,6 +143,7 @@ class IndexController extends Controller
             'statusLabels' => $this->statusLabels(),
             'statusClasses'=> $this->statusClasses(),
             'eventLabels'  => $this->eventLabels(),
+            'fireflyTypeLabels' => $this->fireflyTypeLabels(),
         ]);
     }
 
@@ -165,6 +185,12 @@ class IndexController extends Controller
             session()->flash('success', $this->secretSubmittedMessage($processedTask));
         } catch (RuntimeException $e) {
             session()->flash('error', $e->getMessage());
+        }
+
+        if ('channel' === (string) $request->input('redirect_to', '')) {
+            $source = (string) $request->input('source', $billTask->source);
+
+            return redirect(route('bill-inbox.channel', ['source' => $source]));
         }
 
         if ('index' === (string) $request->input('redirect_to', '')) {
@@ -211,6 +237,12 @@ class IndexController extends Controller
         $this->actionService->archive($billTask);
         session()->flash('success', '账单任务已归档。');
 
+        if ('channel' === (string) request()->input('redirect_to', '')) {
+            $source = (string) request()->input('source', $billTask->source);
+
+            return redirect(route('bill-inbox.channel', ['source' => $source]));
+        }
+
         return redirect(route('bill-inbox.index'));
     }
 
@@ -219,6 +251,13 @@ class IndexController extends Controller
         $ids      = array_map('intval', $request->input('task_ids', []));
         $archived = [] === $ids ? 0 : $this->actionService->archiveMany(auth()->user(), $ids);
         session()->flash('success', sprintf('已归档 %d 个账单任务。', $archived));
+
+        if ('channel' === (string) $request->input('redirect_to', '')) {
+            $source = (string) $request->input('source', '');
+            if (null !== $this->sourceChannel($source)) {
+                return redirect(route('bill-inbox.channel', ['source' => $source]));
+            }
+        }
 
         return redirect(route('bill-inbox.index'));
     }
@@ -369,6 +408,69 @@ class IndexController extends Controller
         ];
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function sourceChannels(): array
+    {
+        $channels = [];
+        foreach ($this->channelRegistry->settingsChannels() as $channel) {
+            $source = (string) $channel['source'];
+            $stats  = BillTask::query()
+                ->where('user_id', auth()->id())
+                ->where('source', $source)
+                ->selectRaw('status, count(*) as total')
+                ->groupBy('status')
+                ->pluck('total', 'status')
+                ->toArray()
+            ;
+            $latest = BillTask::query()
+                ->where('user_id', auth()->id())
+                ->where('source', $source)
+                ->with('mailMessage')
+                ->orderByDesc('received_at')
+                ->orderByDesc('id')
+                ->first()
+            ;
+            $pendingRows = BillStatementRow::query()
+                ->where('user_id', auth()->id())
+                ->where('status', 'pending')
+                ->whereHas('billTask', static fn ($query) => $query->where('source', $source))
+                ->count()
+            ;
+
+            $channels[] = [
+                'source'             => $source,
+                'name'               => $channel['name'],
+                'description'        => $channel['description'],
+                'needs_secret_count' => (int) ($stats['needs_secret'] ?? 0),
+                'todo_count'         => (int) ($stats['received'] ?? 0) + (int) ($stats['ready'] ?? 0),
+                'failed_count'       => (int) ($stats['failed'] ?? 0) + (int) ($stats['unknown'] ?? 0),
+                'parsed_count'       => (int) ($stats['parsed'] ?? 0),
+                'pending_row_count'  => $pendingRows,
+                'latest_task'        => $latest,
+                'latest_status'      => null === $latest ? null : (string) $latest->status,
+                'latest_received_at' => null === $latest ? null : $latest->received_at,
+            ];
+        }
+
+        return $channels;
+    }
+
+    /**
+     * @return null|array<string, string>
+     */
+    private function sourceChannel(string $source): ?array
+    {
+        foreach ($this->channelRegistry->settingsChannels() as $channel) {
+            if ($source === (string) $channel['source']) {
+                return $channel;
+            }
+        }
+
+        return null;
+    }
+
     private function artifactDisplayName(BillTask $billTask, BillArtifact $artifact): string
     {
         if ('wechat' !== $billTask->source) {
@@ -408,6 +510,15 @@ class IndexController extends Controller
             'ignored'      => '已忽略',
             'cleaned'      => '已归档',
             'pending'      => '待存入',
+        ];
+    }
+
+    private function fireflyTypeLabels(): array
+    {
+        return [
+            'withdrawal' => '支出',
+            'deposit'    => '收入',
+            'transfer'   => '转账',
         ];
     }
 

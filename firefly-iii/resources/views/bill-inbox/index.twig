@@ -52,122 +52,71 @@
                             <p class="text-warning" style="margin: 10px 0 0;">
                                 邮箱配置已保存，但同步开关未启用。进入邮箱配置页勾选“启用账单邮箱同步”后，后续同步 worker 才会处理邮件。
                             </p>
-                        {% else %}
-                            <form method="POST" action="{{ route('bill-inbox.sync') }}" style="margin: 10px 0 0;">
-                                <input type="hidden" name="_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-primary btn-sm">
-                                    <span class="fa fa-refresh fa-fw"></span> 立即同步
-                                </button>
-                            </form>
                         {% endif %}
-                    </div>
-                    <div class="btn-group" role="group">
-                        <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
-                        {% for status, total in stats %}
-                            <a class="btn btn-default {% if currentStatus == status %}active{% endif %}" href="{{ route('bill-inbox.index', {status: status}) }}">
-                                {{ statusLabels[status]|default(status) }} <span class="label {{ statusClasses[status]|default('label-info') }}">{{ total }}</span>
-                            </a>
-                        {% endfor %}
                     </div>
                 </div>
                 <div class="box-body no-padding">
-                    {% if tasks.count() == 0 %}
-                        <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱后，内置渠道识别出的账单邮件会显示在这里。</p>
-                    {% else %}
-                        {% for task in tasks %}
-                            {% if task.currentSecretChallenge %}
-                                <form id="bill-secret-{{ task.id }}" method="POST" action="{{ route('bill-inbox.secret', [task.id]) }}">
-                                    <input type="hidden" name="_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="redirect_to" value="index">
-                                    {% if currentStatus != '' %}
-                                        <input type="hidden" name="status" value="{{ currentStatus }}">
-                                    {% endif %}
-                                </form>
-                            {% endif %}
-                        {% endfor %}
-                        <form method="POST" action="{{ route('bill-inbox.archive-many') }}">
-                            <input type="hidden" name="_token" value="{{ csrf_token() }}">
-                            <div class="table-responsive">
-                            <table class="table table-hover table-striped">
-                                <thead>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped">
+                            <thead>
+                            <tr>
+                                <th>渠道</th>
+                                <th>最近收到</th>
+                                <th>需要验证码</th>
+                                <th>待处理</th>
+                                <th>处理失败</th>
+                                <th>已解析</th>
+                                <th>待存入</th>
+                                <th>最近状态</th>
+                                <th style="width: 90px;">操作</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {% for channel in sourceChannels %}
                                 <tr>
-                                    <th style="width: 36px;"></th>
-                                    <th style="width: 80px;">ID</th>
-                                    <th>状态</th>
-                                    <th>来源</th>
-                                    <th>邮件/摘要</th>
-                                    <th>流水</th>
-                                    <th>收到时间</th>
-                                    <th>下一步</th>
-                                    <th style="width: 150px;">操作</th>
+                                    <td>
+                                        <strong>{{ channel.name }}</strong>
+                                    </td>
+                                    <td>
+                                        {% if channel.latest_received_at %}
+                                            {{ channel.latest_received_at.format('Y-m-d H:i') }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="label {{ statusClasses.needs_secret|default('label-warning') }}">{{ channel.needs_secret_count }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="label {{ statusClasses.ready|default('label-warning') }}">{{ channel.todo_count }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="label {{ statusClasses.failed|default('label-danger') }}">{{ channel.failed_count }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="label {{ statusClasses.parsed|default('label-primary') }}">{{ channel.parsed_count }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="label {{ statusClasses.pending|default('label-warning') }}">{{ channel.pending_row_count }}</span>
+                                    </td>
+                                    <td>
+                                        {% if channel.latest_status %}
+                                            <span class="label {{ statusClasses[channel.latest_status]|default('label-info') }}">{{ statusLabels[channel.latest_status]|default(channel.latest_status) }}</span>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a class="btn btn-xs btn-primary" href="{{ route('bill-inbox.channel', {source: channel.source}) }}">
+                                            <span class="fa fa-arrow-right fa-fw"></span> 进入
+                                        </a>
+                                    </td>
                                 </tr>
-                                </thead>
-                                <tbody>
-                                {% for task in tasks %}
-                                    <tr>
-                                        <td><input type="checkbox" name="task_ids[]" value="{{ task.id }}"></td>
-                                        <td>#{{ task.id }}</td>
-                                        <td>
-                                            <span class="label {{ statusClasses[task.status]|default('label-info') }}">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                        </td>
-                                        <td>{{ task.source }}{% if task.profile_id %}<br><small class="text-muted">{{ task.profile_id }}</small>{% endif %}</td>
-                                        <td>
-                                            <a href="{{ route('bill-inbox.show', [task.id]) }}">{{ task.summary|default(task.mailMessage.subject|default('无标题账单邮件')) }}</a>
-                                            {% if task.mailMessage %}
-                                                <br><small class="text-muted">{{ task.mailMessage.from_address }} → {{ task.mailMessage.to_address }}</small>
-                                            {% endif %}
-                                        </td>
-                                        <td>{{ task.statementRows.count() }}</td>
-                                        <td>
-                                            {% if task.received_at %}
-                                                {{ task.received_at.format('Y-m-d H:i') }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            {% if task.currentSecretChallenge %}
-                                                {% set secretPrompt = task.currentSecretChallenge.prompt|default('请输入密码或验证码') %}
-                                                <div class="input-group input-group-sm" style="min-width: 260px; max-width: 420px;">
-                                                    <input form="bill-secret-{{ task.id }}" class="form-control" type="password" name="value" autocomplete="one-time-code" required placeholder="{{ secretPrompt }}" title="{{ secretPrompt }}" aria-label="{{ secretPrompt }}">
-                                                    <span class="input-group-btn">
-                                                        <button form="bill-secret-{{ task.id }}" class="btn btn-warning btn-sm" type="submit">
-                                                            <span class="fa fa-key fa-fw"></span> 提交
-                                                        </button>
-                                                    </span>
-                                                </div>
-                                            {% elseif task.error_message %}
-                                                {{ task.error_message }}
-                                            {% else %}
-                                                查看详情
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.show', [task.id]) }}">
-                                                <span class="fa fa-search fa-fw"></span> 查看
-                                            </a>
-                                            <button class="btn btn-xs btn-default" type="submit" name="task_ids[]" value="{{ task.id }}">
-                                                <span class="fa fa-archive fa-fw"></span> 归档
-                                            </button>
-                                        </td>
-                                    </tr>
-                                {% endfor %}
-                                </tbody>
-                            </table>
-                            </div>
-                            <div style="padding: 10px 15px;">
-                                <button type="submit" class="btn btn-default btn-sm">
-                                    <span class="fa fa-archive fa-fw"></span> 批量归档
-                                </button>
-                            </div>
-                        </form>
-                    {% endif %}
-                </div>
-                {% if tasks.count() > 0 %}
-                    <div class="box-footer">
-                        {{ tasks.links('pagination.bootstrap-4')|raw }}
+                            {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
-                {% endif %}
+                </div>
             </div>
         </div>
     </div>

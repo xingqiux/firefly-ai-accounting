@@ -10,6 +10,7 @@ use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillMailboxConfig;
 use FireflyIII\Services\BillIngestion\BillMailboxSyncResult;
 use FireflyIII\Services\BillIngestion\BillMailboxSyncService;
+use FireflyIII\Services\BillIngestion\BillTaskProcessor;
 use FireflyIII\Services\BillIngestion\ImapBillMailboxClient;
 use FireflyIII\Support\Facades\Preferences;
 use FireflyIII\User;
@@ -45,10 +46,12 @@ final class BillMailboxSyncServiceTest extends TestCase
             'FROM "service@mail.alipay.com"',
             'FROM "wechatpay@tencent.com"',
             'FROM "95555@message.cmbchina.com"',
+            'SUBJECT "中国银行交易流水"',
         ], $registry->mailboxSearchCriteria());
         $this->assertSame('alipay', $registry->find('alipay', 'alipay-statement')?->source());
         $this->assertSame('wechat', $registry->find('wechat', 'wechat-pay-statement')?->source());
         $this->assertSame('cmb', $registry->find('cmb', 'cmb-transaction-statement')?->source());
+        $this->assertSame('boc', $registry->find('boc', 'boc-transaction-statement')?->source());
     }
 
     public function testSyncCreatesAlipayTaskFromConfiguredGmailMailbox(): void
@@ -180,6 +183,50 @@ final class BillMailboxSyncServiceTest extends TestCase
         Storage::disk('local')->assertExists($artifact->path);
     }
 
+    public function testSyncCreatesBocTaskFromEncryptedPdfMailAndRequestsPassword(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient([
+            new FakeImapMailMessage('66', $this->bocRawMessage()),
+        ]);
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox();
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+        app(BillTaskProcessor::class)->processBatch(10, $this->user);
+
+        $this->assertSame(1, $result->scanned);
+        $this->assertSame(1, $result->created);
+        $this->assertSame(0, $result->failed);
+        $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
+        $this->assertSame(['66'], $client->seenUids);
+
+        $mail = BillMailMessage::query()->first();
+        $this->assertSame('<boc-statement-20260617@mail.example>', $mail->message_id);
+        $this->assertSame('service@bank-of-china.example', $mail->from_address);
+        $this->assertSame('中国银行交易流水', $mail->subject);
+        $this->assertNotNull($mail->body_text_path);
+        Storage::disk('local')->assertExists($mail->body_text_path);
+
+        $task = BillTask::query()->where('source', 'boc')->first();
+        $this->assertInstanceOf(BillTask::class, $task);
+        $this->assertSame('boc-transaction-statement', $task->profile_id);
+        $this->assertSame('needs_secret', $task->status);
+        $this->assertSame('中国银行交易流水', $task->summary);
+        $this->assertSame('boc_app_statement_record', $task->metadata['password_source']);
+        $this->assertSame('service@bank-of-china.example', $task->metadata['sender']);
+        $this->assertSame('请输入中国银行APP“交易流水打印”申请记录中的打开密码', $task->currentSecretChallenge->prompt);
+
+        $artifact = BillArtifact::query()->first();
+        $this->assertSame($task->id, $artifact->bill_task_id);
+        $this->assertSame('pdf', $artifact->kind);
+        $this->assertSame('KA020003687d1a432d8001.pdf', $artifact->filename);
+        $this->assertTrue($artifact->encrypted);
+        $this->assertSame('boc_app_statement_record', $artifact->metadata['password_source']);
+        $this->assertNotNull($artifact->path);
+        Storage::disk('local')->assertExists($artifact->path);
+    }
+
     public function testSyncSkipsDuplicateMessages(): void
     {
         Storage::fake('local');
@@ -225,6 +272,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
         $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
+        $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
     }
 
     public function testBuiltInAlipayChannelDoesNotDependOnCustomProcessingRules(): void
@@ -251,6 +299,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
         $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
+        $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
     }
 
     public function testSyncDoesNothingWhenMailboxIsDisabled(): void
@@ -397,6 +446,29 @@ TEXT;
             ->attach('cmb encrypted zip bytes', '交易流水(申请时间2026年06月16日17时44分37秒).zip', 'application/zip')
         ;
         $email->getHeaders()->addIdHeader('Message-ID', 'cmb-transaction-statement-20260616@cmbchina.com');
+
+        return $email->toString();
+    }
+
+    private function bocRawMessage(): string
+    {
+        $text = <<<TEXT
+尊敬的用户：
+
+您好！附件是您通过中国银行APP申请的电子版交易流水，请查收。
+
+基于安全考虑，附件已加密，打开密码请在中国银行APP“交易流水打印”功能的申请记录中查询。如果您存有对应的打开密码打开。
+TEXT;
+
+        $email = (new \Symfony\Component\Mime\Email())
+            ->from('中国银行 <service@bank-of-china.example>')
+            ->to('ziyufg@gmail.com')
+            ->subject('中国银行交易流水')
+            ->date(new \DateTimeImmutable('2026-06-17 16:44:00 +0800'))
+            ->text($text)
+            ->attach('encrypted pdf bytes', 'KA020003687d1a432d8001.pdf', 'application/pdf')
+        ;
+        $email->getHeaders()->addIdHeader('Message-ID', 'boc-statement-20260617@mail.example');
 
         return $email->toString();
     }

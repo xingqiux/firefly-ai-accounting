@@ -1370,6 +1370,14 @@ Breadcrumbs::for(
 );
 
 Breadcrumbs::for(
+    'bill-inbox.channel',
+    static function (Generator $breadcrumbs, array $channel): void {
+        $breadcrumbs->parent('bill-inbox.index');
+        $breadcrumbs->push($channel['name'], route('bill-inbox.channel', ['source' => $channel['source']]));
+    }
+);
+
+Breadcrumbs::for(
     'bill-inbox.show',
     static function (Generator $breadcrumbs, BillTask $billTask): void {
         $breadcrumbs->parent('bill-inbox.index');

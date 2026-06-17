@@ -38,77 +38,57 @@
 
     <li class="header text-uppercase">{{ 'accounting'|_ }}</li>
 
-    <li class="{{ activeRoutePartial('transactions') }} treeview" id="transaction-menu">
+    <li class="{{ activeRoutePartial('transactions') }} treeview menu-open" id="transaction-menu">
         <a href="#">
             <em class="fa fa-exchange fa-fw"></em>
             <span>{{ 'transactions'|_ }}</span>
-            <span class="pull-right-container">
-        <span class="fa fa-angle-left pull-right"></span>
-      </span>
         </a>
 
-        <ul class="treeview-menu">
+        <ul class="treeview-menu bill-sidebar-treeview-menu" style="display: block;">
             <li class="{{ activeRoutePartialObjectType('transactions', 'withdrawal') }}">
                 <a href="{{ route('transactions.index', ['withdrawal']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'expenses'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartialObjectType('transactions', 'deposit') }}">
                 <a href="{{ route('transactions.index', ['deposit']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'income'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartialObjectType('transactions', 'transfers') }}">
                 <a href="{{ route('transactions.index', ['transfers']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'transfers'|_ }}</span>
                 </a>
             </li>
         </ul>
     </li>
 
-    <li class="{{ activeRoutePartial('recurring') }} {{ activeRoutePartial('rules') }} treeview">
+    <li class="{{ activeRoutePartial('recurring') }} {{ activeRoutePartial('rules') }} treeview menu-open">
         <a href="#">
             <em class="fa fa-microchip fa-fw"></em>
             <span>{{ 'automation'|_ }}</span>
-            <span class="pull-right-container">
-        <span class="fa fa-angle-left pull-right"></span>
-      </span>
         </a>
 
-        <ul class="treeview-menu">
+        <ul class="treeview-menu bill-sidebar-treeview-menu" style="display: block;">
             <li class="{{ activeRoutePartial('rules') }}">
                 <a href="{{ route('rules.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'rules'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('recurring') }}">
                 <a href="{{ route('recurring.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'recurrences'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('bill-inbox') }}">
                 <a href="{{ route('bill-inbox.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>账单收件箱</span>
                 </a>
             </li>
             {% if true == featuringWebhooks %}
                 <li class="{{ activeRoutePartial('webhooks') }}">
                     <a href="{{ route('webhooks.index') }}">
-                        <span class="fa fa-angle-right fa-fw"></span>
                         <span>{{ 'webhooks'|_ }}</span>
-                    </a>
-                </li>
-            {% else %}
-                <li class="">
-                    <a href="#">
-                        <span class="fa fa-angle-right fa-fw"></span>
-                        <span>{{ 'webhooks'|_ }} ({{ 'webhooks_menu_disabled'|_ }})</span>
                     </a>
                 </li>
             {% endif %}
@@ -117,68 +97,55 @@
 
     <li class="header text-uppercase">{{ 'others'|_ }}</li>
 
-    <li class="{{ activeRoutePartial('accounts') }} treeview" id="account-menu">
+    <li class="{{ activeRoutePartial('accounts') }} treeview menu-open" id="account-menu">
         <a href="#">
             <em class="fa fa-credit-card fa-fw"></em>
             <span>{{ 'accounts'|_ }}</span>
-            <span class="pull-right-container">
-        <span class="fa fa-angle-left pull-right"></span>
-      </span>
         </a>
 
-        <ul class="treeview-menu">
+        <ul class="treeview-menu bill-sidebar-treeview-menu" style="display: block;">
             <li class="{{ activeRoutePartialObjectType('accounts', 'asset') }}">
                 <a href="{{ route('accounts.index', ['asset']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'asset_accounts'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartialObjectType('accounts', 'expense') }}">
                 <a href="{{ route('accounts.index', ['expense']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'expense_accounts'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartialObjectType('accounts', 'revenue') }}">
                 <a href="{{ route('accounts.index', ['revenue']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'revenue_accounts'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartialObjectType('accounts', 'liabilities') }}">
                 <a href="{{ route('accounts.index', ['liabilities']) }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'liabilities_accounts'|_ }}</span>
                 </a>
             </li>
         </ul>
     </li>
 
-    <li class="{{ activeRoutePartial('categories') }} {{ activeRoutePartial('tags') }} {{ activeRoutePartial('groups') }} treeview">
+    <li class="{{ activeRoutePartial('categories') }} {{ activeRoutePartial('tags') }} {{ activeRoutePartial('groups') }} treeview menu-open">
         <a href="#">
             <em class="fa fa-tags fa-fw"></em>
             <span>{{ 'classification'|_ }}</span>
-            <span class="pull-right-container">
-        <span class="fa fa-angle-left pull-right"></span>
-      </span>
         </a>
 
-        <ul class="treeview-menu">
+        <ul class="treeview-menu bill-sidebar-treeview-menu" style="display: block;">
             <li class="{{ activeRoutePartial('categories') }}">
                 <a href="{{ route('categories.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'categories'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('tags') }}">
                 <a href="{{ route('tags.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'tags'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('object-groups') }}">
                 <a href="{{ route('object-groups.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'object_groups_menu_bar'|_ }}</span>
                 </a>
             </li>
@@ -202,60 +169,50 @@
         </li>
     {% endif %}
 
-    <li class="{{ activeRoutePartial('administrations') }} {{ activeRoutePartial('setting') }} {{ activeRoutePartial('oauth') }} {{ activeRoutePartial('profile') }} {{ activeRoutePartial('preferences') }} {{ activeRoutePartial('currencies') }} {{ activeRoutePartial('exchange-rates') }} treeview"
+    <li class="{{ activeRoutePartial('administrations') }} {{ activeRoutePartial('setting') }} {{ activeRoutePartial('oauth') }} {{ activeRoutePartial('profile') }} {{ activeRoutePartial('preferences') }} {{ activeRoutePartial('currencies') }} {{ activeRoutePartial('exchange-rates') }} treeview menu-open"
         id="option-menu">
         <a href="#">
             <em class="fa fa-sliders fa-fw"></em>
             <span>{{ 'options'|_ }}</span>
-            <span class="pull-right-container">
-        <span class="fa fa-angle-left pull-right"></span>
-      </span>
         </a>
 
-        <ul class="treeview-menu">
+        <ul class="treeview-menu bill-sidebar-treeview-menu" style="display: block;">
             <li class="{{ activeRoutePartial('profile') }}">
                 <a class="{{ activeRouteStrict('profile.index') }}" href="{{ route('profile.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'profile'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('oauth') }}">
                 <a class="{{ activeRouteStrict('profile.oauth.index') }}" href="{{ route('profile.oauth.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'oauth_tokens'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('preferences') }}">
                 <a class="{{ activeRouteStrict('preferences.index') }}"
                    href="{{ route('preferences.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'preferences'|_ }}</span>
                 </a>
             </li>
             <li class="{{ activeRoutePartial('currencies') }}">
                 <a class="{{ activeRoutePartial('currencies') }}" href="{{ route('currencies.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'currencies'|_ }}</span>
                 </a>
             </li>
             {% if (fireflyiiiconfig('enable_exchange_rates', true)) %}
             <li class="{{ activeRoutePartial('exchange-rates') }}">
                 <a class="{{ activeRoutePartial('exchange-rates') }}" href="{{ route('exchange-rates.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'menu_exchange_rates_index'|_ }}</span>
                 </a>
             </li>
             {% endif %}
             <li class="{{ activeRoutePartial('administrations') }}">
                 <a class="{{ activeRoutePartial('administration') }}" href="{{ route('administrations.index') }}">
-                    <span class="fa fa-angle-right fa-fw"></span>
                     <span>{{ 'administrations_index_menu'|_ }}</span>
                 </a>
             </li>
             {% if hasRole('owner') %}
                 <li class="{{ activeRoutePartial('settings') }}">
                     <a class="{{ activeRoutePartial('settings') }}" href="{{ route('settings.index') }}">
-                        <span class="fa fa-angle-right fa-fw"></span>
                         <span>{{ 'system_settings'|_ }}</span>
                     </a>
                 </li>
