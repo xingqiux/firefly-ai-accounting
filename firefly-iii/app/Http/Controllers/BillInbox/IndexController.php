@@ -167,6 +167,12 @@ class IndexController extends Controller
             session()->flash('error', $e->getMessage());
         }
 
+        if ('index' === (string) $request->input('redirect_to', '')) {
+            $status = (string) $request->input('status', '');
+
+            return redirect(route('bill-inbox.index', '' === $status ? [] : ['status' => $status]));
+        }
+
         return redirect(route('bill-inbox.show', [$billTask->id]));
     }
 

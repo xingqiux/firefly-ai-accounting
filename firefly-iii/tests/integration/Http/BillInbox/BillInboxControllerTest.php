@@ -54,6 +54,29 @@ final class BillInboxControllerTest extends TestCase
         $response->assertDontSee('这里显示从邮箱识别出的账单任务');
     }
 
+    public function testIndexAllowsSubmittingSecretFromTaskRow(): void
+    {
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.index'));
+
+        $response->assertStatus(200);
+        $response->assertSee(sprintf('id="bill-secret-%d"', $this->task->id), false);
+        $response->assertSee(sprintf('form="bill-secret-%d"', $this->task->id), false);
+        $response->assertSee(sprintf('action="%s"', route('bill-inbox.secret', [$this->task->id])), false);
+        $response->assertSee('name="value"', false);
+        $response->assertSee('autocomplete="one-time-code"', false);
+        $response->assertSee('提交', false);
+        $response->assertSee('name="redirect_to" value="index"', false);
+        $response->assertDontSee('提交后系统只记录挑战已处理');
+        $response->assertDontSee('明文密码');
+
+        $post = $this->post(route('bill-inbox.secret', [$this->task->id]), [
+            'value'       => '123456',
+            'redirect_to' => 'index',
+        ]);
+
+        $post->assertRedirect(route('bill-inbox.index'));
+    }
+
     public function testIndexShowsMailboxConfigurationStatus(): void
     {
         $this->actingAs($this->user);

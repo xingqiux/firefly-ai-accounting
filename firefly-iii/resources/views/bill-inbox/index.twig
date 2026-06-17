@@ -74,6 +74,17 @@
                     {% if tasks.count() == 0 %}
                         <p class="text-muted" style="padding: 15px;">暂无账单任务。配置邮箱后，内置渠道识别出的账单邮件会显示在这里。</p>
                     {% else %}
+                        {% for task in tasks %}
+                            {% if task.currentSecretChallenge %}
+                                <form id="bill-secret-{{ task.id }}" method="POST" action="{{ route('bill-inbox.secret', [task.id]) }}">
+                                    <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="redirect_to" value="index">
+                                    {% if currentStatus != '' %}
+                                        <input type="hidden" name="status" value="{{ currentStatus }}">
+                                    {% endif %}
+                                </form>
+                            {% endif %}
+                        {% endfor %}
                         <form method="POST" action="{{ route('bill-inbox.archive-many') }}">
                             <input type="hidden" name="_token" value="{{ csrf_token() }}">
                             <div class="table-responsive">
@@ -116,7 +127,15 @@
                                         </td>
                                         <td>
                                             {% if task.currentSecretChallenge %}
-                                                {{ task.currentSecretChallenge.prompt|default('请输入密码或验证码') }}
+                                                {% set secretPrompt = task.currentSecretChallenge.prompt|default('请输入密码或验证码') %}
+                                                <div class="input-group input-group-sm" style="min-width: 260px; max-width: 420px;">
+                                                    <input form="bill-secret-{{ task.id }}" class="form-control" type="password" name="value" autocomplete="one-time-code" required placeholder="{{ secretPrompt }}" title="{{ secretPrompt }}" aria-label="{{ secretPrompt }}">
+                                                    <span class="input-group-btn">
+                                                        <button form="bill-secret-{{ task.id }}" class="btn btn-warning btn-sm" type="submit">
+                                                            <span class="fa fa-key fa-fw"></span> 提交
+                                                        </button>
+                                                    </span>
+                                                </div>
                                             {% elseif task.error_message %}
                                                 {{ task.error_message }}
                                             {% else %}
