@@ -482,6 +482,181 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('霸王茶姬', $first->destination_name);
     }
 
+    public function testAlipayOverlappingStatementsReuseExistingRowsAndPreserveUserEdits(): void
+    {
+        Storage::fake('local');
+
+        $firstTask  = $this->createTask('ready', 'alipay', 'alipay-statement');
+        $firstZip   = $this->createEncryptedStatementArtifact($firstTask, 'alipay-first.zip', $this->alipayStatementCsv(), 'zip-secret');
+        $firstRun   = app(BillTaskProcessor::class)->process($firstTask, 'zip-secret');
+
+        $this->assertTrue($firstRun);
+
+        $firstImport = BillStatementImport::query()
+            ->where('bill_artifact_id', $firstTask->artifacts()->where('derived_from_artifact_id', $firstZip->id)->firstOrFail()->id)
+            ->firstOrFail()
+        ;
+        $firstRow = BillStatementRow::query()->where('bill_statement_import_id', $firstImport->id)->orderBy('row_number')->firstOrFail();
+        $firstRow->category_name    = '人工通讯';
+        $firstRow->notes            = '用户手动确认过的备注';
+        $firstRow->source_name      = '手动招商账户';
+        $firstRow->user_modified_at = Carbon::parse('2026-06-16 09:00:00', 'Asia/Shanghai');
+        $firstRow->save();
+
+        $secondTask = $this->createTask('ready', 'alipay', 'alipay-statement');
+        $secondZip  = $this->createEncryptedStatementArtifact($secondTask, 'alipay-second.zip', $this->alipayStatementCsv(), 'zip-secret');
+        $secondRun  = app(BillTaskProcessor::class)->process($secondTask, 'zip-secret');
+
+        $this->assertTrue($secondRun);
+
+        $secondImport = BillStatementImport::query()
+            ->where('bill_artifact_id', $secondTask->artifacts()->where('derived_from_artifact_id', $secondZip->id)->firstOrFail()->id)
+            ->firstOrFail()
+        ;
+
+        $this->assertSame(2, BillStatementImport::query()->count());
+        $this->assertSame(3, BillStatementRow::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->where('bill_statement_import_id', $secondImport->id)->count());
+
+        $firstRow->refresh();
+        $this->assertNotNull($firstRow->external_key);
+        $this->assertNotNull($firstRow->fingerprint);
+        $this->assertSame('duplicate', $firstRow->duplicate_state);
+        $this->assertNull($firstRow->duplicate_of_row_id);
+        $this->assertSame('人工通讯', $firstRow->category_name);
+        $this->assertSame('用户手动确认过的备注', $firstRow->notes);
+        $this->assertSame('手动招商账户', $firstRow->source_name);
+        $this->assertSame('2026-06-16 09:00:00', $firstRow->user_modified_at->format('Y-m-d H:i:s'));
+        $this->assertContains($secondImport->id, $firstRow->metadata['identity']['seen_import_ids']);
+        $this->assertContains($firstRow->id, $secondImport->metadata['identity']['duplicate_row_ids']);
+        $this->assertContains($firstRow->id, $secondImport->metadata['identity']['preserved_user_edit_row_ids']);
+    }
+
+    public function testAlipayOverlappingStatementReusesRowsCreatedBeforeIdentityColumnsWereFilled(): void
+    {
+        Storage::fake('local');
+
+        $firstTask = $this->createTask('ready', 'alipay', 'alipay-statement');
+        $this->createEncryptedStatementArtifact($firstTask, 'alipay-first.zip', $this->alipayStatementCsv(), 'zip-secret');
+
+        $this->assertTrue(app(BillTaskProcessor::class)->process($firstTask, 'zip-secret'));
+        $legacyRow = BillStatementRow::query()->where('platform_order_no', '2026061522001414871443694067')->firstOrFail();
+        $legacyRow->external_key    = null;
+        $legacyRow->fingerprint     = null;
+        $legacyRow->duplicate_state = 'unique';
+        $legacyRow->save();
+
+        $secondTask = $this->createTask('ready', 'alipay', 'alipay-statement');
+        $secondZip  = $this->createEncryptedStatementArtifact($secondTask, 'alipay-second.zip', $this->alipayStatementCsv(), 'zip-secret');
+
+        $this->assertTrue(app(BillTaskProcessor::class)->process($secondTask, 'zip-secret'));
+
+        $secondImport = BillStatementImport::query()
+            ->where('bill_artifact_id', $secondTask->artifacts()->where('derived_from_artifact_id', $secondZip->id)->firstOrFail()->id)
+            ->firstOrFail()
+        ;
+
+        $this->assertSame(3, BillStatementRow::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->where('bill_statement_import_id', $secondImport->id)->count());
+
+        $legacyRow->refresh();
+        $this->assertSame('duplicate', $legacyRow->duplicate_state);
+        $this->assertNotNull($legacyRow->external_key);
+        $this->assertNotNull($legacyRow->fingerprint);
+    }
+
+    public function testWechatOverlappingStatementsReuseRowsByTransactionNumbers(): void
+    {
+        Storage::fake('local');
+
+        $firstTask = $this->createTask('ready', 'wechat', 'wechat-pay-statement');
+        $this->createEncryptedStatementArtifact($firstTask, 'wechat-first.zip', $this->wechatStatementCsv(), 'zip-secret', 'wechat-pay-records.csv');
+
+        $this->assertTrue(app(BillTaskProcessor::class)->process($firstTask, 'zip-secret'));
+        $this->assertSame(2, BillStatementRow::query()->count());
+
+        $secondTask = $this->createTask('ready', 'wechat', 'wechat-pay-statement');
+        $secondZip  = $this->createEncryptedStatementArtifact($secondTask, 'wechat-second.zip', $this->wechatStatementCsv(), 'zip-secret', 'wechat-pay-records.csv');
+
+        $this->assertTrue(app(BillTaskProcessor::class)->process($secondTask, 'zip-secret'));
+
+        $secondImport = BillStatementImport::query()
+            ->where('bill_artifact_id', $secondTask->artifacts()->where('derived_from_artifact_id', $secondZip->id)->firstOrFail()->id)
+            ->firstOrFail()
+        ;
+
+        $this->assertSame(2, BillStatementRow::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->where('bill_statement_import_id', $secondImport->id)->count());
+
+        $firstRow = BillStatementRow::query()->where('platform_order_no', '420000000000000001')->firstOrFail();
+        $this->assertNotNull($firstRow->external_key);
+        $this->assertSame('duplicate', $firstRow->duplicate_state);
+        $this->assertContains($firstRow->id, $secondImport->metadata['identity']['duplicate_row_ids']);
+        $this->assertContains($secondImport->id, $firstRow->metadata['identity']['seen_import_ids']);
+    }
+
+    public function testCmbStatementsUseFingerprintForDuplicatesAndMarkConflicts(): void
+    {
+        Storage::fake('local');
+
+        $firstTask = $this->createTask('parsed', 'cmb', 'cmb-transaction-statement');
+        $firstPath = 'bill-inbox/1/derived/cmb-first.pdf';
+        Storage::disk('local')->put($firstPath, $this->cmbStatementPdfText());
+        $firstArtifact = BillArtifact::query()->create([
+            'bill_task_id' => $firstTask->id,
+            'kind'         => 'pdf',
+            'filename'     => '招商银行交易流水.pdf',
+            'path'         => $firstPath,
+            'encrypted'    => false,
+            'metadata'     => ['source' => 'cmb_zip_extract'],
+        ]);
+
+        app(CmbStatementImportService::class)->importExtractedText($firstArtifact, $this->cmbStatementPdfText());
+        $this->assertSame(4, BillStatementRow::query()->count());
+
+        $secondTask = $this->createTask('parsed', 'cmb', 'cmb-transaction-statement');
+        $secondPath = 'bill-inbox/2/derived/cmb-second.pdf';
+        Storage::disk('local')->put($secondPath, $this->cmbStatementPdfText());
+        $secondArtifact = BillArtifact::query()->create([
+            'bill_task_id' => $secondTask->id,
+            'kind'         => 'pdf',
+            'filename'     => '招商银行交易流水.pdf',
+            'path'         => $secondPath,
+            'encrypted'    => false,
+            'metadata'     => ['source' => 'cmb_zip_extract'],
+        ]);
+
+        $secondImport = app(CmbStatementImportService::class)->importExtractedText($secondArtifact, $this->cmbStatementPdfText());
+
+        $this->assertSame(4, BillStatementRow::query()->count());
+        $this->assertSame(0, BillStatementRow::query()->where('bill_statement_import_id', $secondImport->id)->count());
+
+        $firstRow = BillStatementRow::query()->where('counterparty', '上海公共交通卡股份有限公司')->firstOrFail();
+        $this->assertNull($firstRow->external_key);
+        $this->assertNotNull($firstRow->fingerprint);
+        $this->assertSame('duplicate', $firstRow->duplicate_state);
+
+        $conflictTask = $this->createTask('parsed', 'cmb', 'cmb-transaction-statement');
+        $conflictPath = 'bill-inbox/3/derived/cmb-conflict.pdf';
+        $conflictText = str_replace('-5.00             132.24           快捷支付', '-6.00             131.24           快捷支付', $this->cmbStatementPdfText());
+        Storage::disk('local')->put($conflictPath, $conflictText);
+        $conflictArtifact = BillArtifact::query()->create([
+            'bill_task_id' => $conflictTask->id,
+            'kind'         => 'pdf',
+            'filename'     => '招商银行交易流水.pdf',
+            'path'         => $conflictPath,
+            'encrypted'    => false,
+            'metadata'     => ['source' => 'cmb_zip_extract'],
+        ]);
+
+        $conflictImport = app(CmbStatementImportService::class)->importExtractedText($conflictArtifact, $conflictText);
+
+        $this->assertSame(4, BillStatementRow::query()->count());
+        $firstRow->refresh();
+        $this->assertSame('conflict', $firstRow->duplicate_state);
+        $this->assertContains($firstRow->id, $conflictImport->metadata['identity']['conflict_row_ids']);
+    }
+
     public function testArtisanCommandRunsProcessorInFireflyBackend(): void
     {
         $this->createTask('received', 'unknown', null);
@@ -541,6 +716,21 @@ final class BillTaskProcessorTest extends TestCase
         }
 
         return $bytes;
+    }
+
+    private function createEncryptedStatementArtifact(BillTask $task, string $zipFilename, string $statementContent, string $password, string $innerFilename = 'alipay-records.csv'): BillArtifact
+    {
+        $zipPath = sprintf('bill-inbox/%d/attachments/%s', $task->id, $zipFilename);
+        Storage::disk('local')->put($zipPath, $this->encryptedZipBytes($password, $statementContent, $innerFilename));
+
+        return BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'zip',
+            'filename'     => $zipFilename,
+            'path'         => $zipPath,
+            'encrypted'    => true,
+            'metadata'     => ['password_source' => 'wechat' === $task->source ? 'wechat_pay_official_account' : 'alipay_service_message'],
+        ]);
     }
 
     private function alipayStatementCsv(): string

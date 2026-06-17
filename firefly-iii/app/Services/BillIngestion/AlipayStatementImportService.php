@@ -7,7 +7,6 @@ namespace FireflyIII\Services\BillIngestion;
 use Carbon\Carbon;
 use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillStatementImport;
-use FireflyIII\Models\BillStatementRow;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
@@ -27,6 +26,8 @@ class AlipayStatementImportService
         '商家订单号',
         '备注',
     ];
+
+    public function __construct(private readonly BillStatementRowIdentityService $rowIdentityService) {}
 
     public function importArtifact(BillArtifact $artifact, string $content): BillStatementImport
     {
@@ -59,7 +60,7 @@ class AlipayStatementImportService
         ]);
 
         foreach ($parsed['rows'] as $index => $row) {
-            BillStatementRow::query()->create($this->rowAttributes($import, $row, $index + 1));
+            $this->rowIdentityService->upsertRow($import, $this->rowAttributes($import, $row, $index + 1));
         }
 
         return $import;

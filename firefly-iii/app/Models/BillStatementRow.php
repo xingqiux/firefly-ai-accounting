@@ -33,6 +33,11 @@ class BillStatementRow extends Model
         'transaction_status',
         'platform_order_no',
         'merchant_order_no',
+        'external_key',
+        'fingerprint',
+        'duplicate_of_row_id',
+        'duplicate_state',
+        'user_modified_at',
         'remark',
         'raw_data',
         'editable_data',
@@ -86,6 +91,11 @@ class BillStatementRow extends Model
         return $this->belongsTo(TransactionGroup::class);
     }
 
+    public function duplicateOf(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'duplicate_of_row_id');
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
@@ -98,6 +108,7 @@ class BillStatementRow extends Model
             'updated_at'                 => 'datetime',
             'occurred_at'                => 'datetime',
             'firefly_date'               => 'datetime',
+            'user_modified_at'           => 'datetime',
             'raw_data'                   => 'json',
             'editable_data'              => 'json',
             'tags'                       => 'json',
@@ -107,6 +118,7 @@ class BillStatementRow extends Model
             'bill_statement_import_id'   => 'integer',
             'row_number'                 => 'integer',
             'transaction_group_id'       => 'integer',
+            'duplicate_of_row_id'        => 'integer',
         ];
     }
 }

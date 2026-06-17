@@ -48,10 +48,23 @@ class BillStatementRowSummaryService
         $skipCandidates     = [];
         $needsUserNote      = [];
         $newCandidates      = [];
+        $duplicateCandidates = [];
+        $conflictCandidates  = [];
+        $preservedUserEdits  = [];
 
         foreach ($pendingRows as $row) {
             $preview = $this->rowPreview($row);
-            if (null !== $row->firefly_type && '' !== $row->firefly_type && !$this->looksSpecialCase($row)) {
+            if ('conflict' === $row->duplicate_state) {
+                $conflictCandidates[] = $preview + ['reason' => '疑似重复但核心字段冲突'];
+                $skipCandidates[]     = $preview + ['reason' => '重复识别冲突，需要人工确认'];
+            }
+            if ('duplicate' === $row->duplicate_state) {
+                $duplicateCandidates[] = $preview + ['reason' => '已存在相同账单流水'];
+                if (null !== $row->user_modified_at) {
+                    $preservedUserEdits[] = $preview + ['reason' => '重复流水已保留你的手动修改'];
+                }
+            }
+            if (null !== $row->firefly_type && '' !== $row->firefly_type && !$this->looksSpecialCase($row) && 'conflict' !== $row->duplicate_state) {
                 $newCandidates[] = $preview;
             }
             if ($this->hasExistingReference($row, $existingReferences)) {
@@ -70,13 +83,16 @@ class BillStatementRowSummaryService
         }
 
         return [
-            'summary'             => $this->reviewSummary($rows, $newCandidates, $skipCandidates, $transferCandidates, $needsUserNote),
-            'new_candidates'      => $this->uniqueByRowId($newCandidates),
-            'existing_candidates' => $this->uniqueByRowId($existingCandidates),
-            'skip_candidates'     => $this->uniqueByRowId($skipCandidates),
-            'transfer_candidates' => $this->uniqueByRowId($transferCandidates),
-            'refund_pairs'        => $this->refundPairs($pendingRows),
-            'needs_user_note'     => $this->uniqueByRowId($needsUserNote),
+            'summary'               => $this->reviewSummary($rows, $newCandidates, $skipCandidates, $transferCandidates, $needsUserNote, $duplicateCandidates, $conflictCandidates, $preservedUserEdits),
+            'new_candidates'        => $this->uniqueByRowId($newCandidates),
+            'existing_candidates'   => $this->uniqueByRowId($existingCandidates),
+            'duplicate_candidates'  => $this->uniqueByRowId($duplicateCandidates),
+            'conflict_candidates'   => $this->uniqueByRowId($conflictCandidates),
+            'preserved_user_edits'  => $this->uniqueByRowId($preservedUserEdits),
+            'skip_candidates'       => $this->uniqueByRowId($skipCandidates),
+            'transfer_candidates'   => $this->uniqueByRowId($transferCandidates),
+            'refund_pairs'          => $this->refundPairs($pendingRows),
+            'needs_user_note'       => $this->uniqueByRowId($needsUserNote),
         ];
     }
 
@@ -103,10 +119,11 @@ class BillStatementRowSummaryService
 
         return [
             'total'           => $rows->count(),
-            'by_status'       => $this->countBy($rows, 'status'),
-            'by_direction'    => $this->countBy($rows, 'direction'),
-            'by_firefly_type' => $this->countBy($rows, 'firefly_type'),
-            'amounts'         => [
+            'by_status'          => $this->countBy($rows, 'status'),
+            'by_direction'       => $this->countBy($rows, 'direction'),
+            'by_firefly_type'    => $this->countBy($rows, 'firefly_type'),
+            'by_duplicate_state' => $this->countBy($rows, 'duplicate_state'),
+            'amounts'            => [
                 'expense' => $this->formatAmount($expense),
                 'income'  => $this->formatAmount($income),
                 'net'     => $this->formatAmount(bcsub($income, $expense, 2)),
@@ -133,6 +150,9 @@ class BillStatementRowSummaryService
             'source_name'         => $this->redactText($row->source_name),
             'destination_name'    => $this->redactText($row->destination_name),
             'category_name'       => $row->category_name,
+            'duplicate_state'     => $row->duplicate_state,
+            'duplicate_of_row_id' => null === $row->duplicate_of_row_id ? null : (string) $row->duplicate_of_row_id,
+            'user_modified_at'    => optional($row->user_modified_at)->toAtomString(),
             'error'               => $row->error_message,
             'transaction_group_id'=> null === $row->transaction_group_id ? null : (string) $row->transaction_group_id,
         ];
@@ -299,10 +319,13 @@ class BillStatementRowSummaryService
      * @param array<int,array<string,mixed>>    $skipCandidates
      * @param array<int,array<string,mixed>>    $transferCandidates
      * @param array<int,array<string,mixed>>    $needsUserNote
+     * @param array<int,array<string,mixed>>    $duplicateCandidates
+     * @param array<int,array<string,mixed>>    $conflictCandidates
+     * @param array<int,array<string,mixed>>    $preservedUserEdits
      *
      * @return array<string,mixed>
      */
-    private function reviewSummary(Collection $rows, array $newCandidates, array $skipCandidates, array $transferCandidates, array $needsUserNote): array
+    private function reviewSummary(Collection $rows, array $newCandidates, array $skipCandidates, array $transferCandidates, array $needsUserNote, array $duplicateCandidates, array $conflictCandidates, array $preservedUserEdits): array
     {
         $summary = $this->summaryForRows($rows);
 
@@ -314,6 +337,9 @@ class BillStatementRowSummaryService
             'skip_candidates'         => count($this->uniqueByRowId($skipCandidates)),
             'transfer_candidates'     => count($this->uniqueByRowId($transferCandidates)),
             'needs_user_note'         => count($this->uniqueByRowId($needsUserNote)),
+            'duplicate_candidates'    => count($this->uniqueByRowId($duplicateCandidates)),
+            'conflict_candidates'     => count($this->uniqueByRowId($conflictCandidates)),
+            'preserved_user_edits'    => count($this->uniqueByRowId($preservedUserEdits)),
         ];
     }
 

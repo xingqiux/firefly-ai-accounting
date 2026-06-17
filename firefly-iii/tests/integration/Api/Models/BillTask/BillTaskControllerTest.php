@@ -240,6 +240,11 @@ final class BillTaskControllerTest extends TestCase
         $show->assertStatus(200);
         $show->assertJsonPath('data.id', (string) $row->id);
         $show->assertJsonPath('data.attributes.platform_order_no', '2026061522001414871443694067');
+        $show->assertJsonPath('data.attributes.external_key', 'alipay:order:2026061522001414871443694067');
+        $show->assertJsonPath('data.attributes.fingerprint', 'fp-existing-row');
+        $show->assertJsonPath('data.attributes.duplicate_state', 'unique');
+        $show->assertJsonPath('data.attributes.duplicate_of_row_id', null);
+        $show->assertJsonPath('data.attributes.user_modified_at', null);
 
         $updated = $this->patchJson(route('api.v1.bill-statement-rows.update', ['billStatementRow' => $row->id]), [
             'counterparty'        => '中国联通线上营业厅',
@@ -256,6 +261,8 @@ final class BillTaskControllerTest extends TestCase
         $this->assertSame('中国联通线上营业厅', $row->counterparty);
         $this->assertSame('中国联通线上营业厅', $row->editable_data['交易对方']);
         $this->assertSame('手机充值', $row->firefly_description);
+        $this->assertNotNull($row->user_modified_at);
+        $updated->assertJsonPath('data.attributes.user_modified_at', $row->user_modified_at->toAtomString());
     }
 
     public function testRowsSummaryReturnsCompactRedactedPreview(): void
@@ -279,6 +286,9 @@ final class BillTaskControllerTest extends TestCase
             'description'         => '订单2026061522001414871443694067退款',
             'platform_order_no'   => '2026061522001414871443694999',
             'merchant_order_no'   => 'CP0232671781515214999999',
+            'external_key'        => 'alipay:order:2026061522001414871443694999',
+            'fingerprint'         => 'fp-refund-row',
+            'duplicate_state'     => 'duplicate',
         ]);
 
         $this->actingAs($this->user, 'api');
@@ -295,6 +305,8 @@ final class BillTaskControllerTest extends TestCase
         $response->assertJsonPath('summary.by_direction.收入', 1);
         $response->assertJsonPath('summary.by_firefly_type.withdrawal', 1);
         $response->assertJsonPath('summary.by_firefly_type.deposit', 1);
+        $response->assertJsonPath('summary.by_duplicate_state.unique', 1);
+        $response->assertJsonPath('summary.by_duplicate_state.duplicate', 1);
         $response->assertJsonPath('summary.amounts.expense', '14.95');
         $response->assertJsonPath('summary.amounts.income', '88.00');
         $response->assertJsonPath('summary.amounts.net', '73.05');
@@ -628,6 +640,27 @@ final class BillTaskControllerTest extends TestCase
             'row_number'        => 2,
             'platform_order_no' => '2026061522001414871443600001',
             'merchant_order_no' => 'CP-existing-0001-copy',
+            'external_key'      => 'alipay:order:2026061522001414871443600001',
+            'fingerprint'       => 'fp-duplicate-row',
+            'duplicate_state'   => 'duplicate',
+        ]);
+        $preserved = $this->createStatementRow([
+            'row_number'        => 7,
+            'platform_order_no' => 'manual-edit-0001',
+            'merchant_order_no' => 'manual-edit-merchant-0001',
+            'external_key'      => 'alipay:order:manual-edit-0001',
+            'fingerprint'       => 'fp-preserved-row',
+            'duplicate_state'   => 'duplicate',
+            'category_name'     => '人工分类',
+            'user_modified_at'  => Carbon::parse('2026-06-16 10:00:00', 'Asia/Shanghai'),
+        ]);
+        $conflict = $this->createStatementRow([
+            'row_number'        => 8,
+            'platform_order_no' => 'conflict-0001',
+            'merchant_order_no' => 'conflict-merchant-0001',
+            'external_key'      => 'alipay:order:conflict-0001',
+            'fingerprint'       => 'fp-conflict-row',
+            'duplicate_state'   => 'conflict',
         ]);
         $transfer = $this->createStatementRow([
             'row_number'             => 3,
@@ -676,11 +709,20 @@ final class BillTaskControllerTest extends TestCase
         $response = $this->getJson(route('api.v1.bill-tasks.review', ['billTask' => $this->task->id]));
 
         $response->assertStatus(200);
-        $response->assertJsonPath('summary.total', 6);
+        $response->assertJsonPath('summary.total', 8);
         $response->assertJsonPath('summary.imported', 1);
-        $response->assertJsonPath('summary.pending', 5);
+        $response->assertJsonPath('summary.pending', 7);
+        $response->assertJsonPath('summary.duplicate_candidates', 2);
+        $response->assertJsonPath('summary.conflict_candidates', 1);
+        $response->assertJsonPath('summary.preserved_user_edits', 1);
         $response->assertJsonPath('existing_candidates.0.row_id', (string) $duplicate->id);
         $response->assertJsonPath('existing_candidates.0.reason', '同订单号已存在 Firefly 交易');
+        $response->assertJsonPath('duplicate_candidates.0.row_id', (string) $duplicate->id);
+        $response->assertJsonPath('duplicate_candidates.0.reason', '已存在相同账单流水');
+        $response->assertJsonPath('preserved_user_edits.0.row_id', (string) $preserved->id);
+        $response->assertJsonPath('preserved_user_edits.0.reason', '重复流水已保留你的手动修改');
+        $response->assertJsonPath('conflict_candidates.0.row_id', (string) $conflict->id);
+        $response->assertJsonPath('conflict_candidates.0.reason', '疑似重复但核心字段冲突');
         $response->assertJsonPath('refund_pairs.0.expense_row_id', (string) $refundExpense->id);
         $response->assertJsonPath('refund_pairs.0.income_row_id', (string) $refundIncome->id);
         $body = $response->json();
@@ -801,6 +843,11 @@ final class BillTaskControllerTest extends TestCase
             'transaction_status'       => '交易成功',
             'platform_order_no'        => '2026061522001414871443694067',
             'merchant_order_no'        => 'CP0232671781515214344949',
+            'external_key'             => 'alipay:order:2026061522001414871443694067',
+            'fingerprint'              => 'fp-existing-row',
+            'duplicate_state'          => 'unique',
+            'duplicate_of_row_id'      => null,
+            'user_modified_at'         => null,
             'raw_data'                 => ['交易对方' => '中国联通'],
             'editable_data'            => ['交易对方' => '中国联通', '商品说明' => '为155****2328交费20.00元'],
             'firefly_type'             => 'withdrawal',

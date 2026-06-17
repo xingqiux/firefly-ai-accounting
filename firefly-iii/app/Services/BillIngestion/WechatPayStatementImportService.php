@@ -7,7 +7,6 @@ namespace FireflyIII\Services\BillIngestion;
 use Carbon\Carbon;
 use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillStatementImport;
-use FireflyIII\Models\BillStatementRow;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use ZipArchive;
@@ -26,6 +25,8 @@ class WechatPayStatementImportService
         '交易单号',
         '商户单号',
     ];
+
+    public function __construct(private readonly BillStatementRowIdentityService $rowIdentityService) {}
 
     public function importArtifact(BillArtifact $artifact, string $content): BillStatementImport
     {
@@ -59,7 +60,7 @@ class WechatPayStatementImportService
         ]);
 
         foreach ($parsed['rows'] as $index => $row) {
-            BillStatementRow::query()->create($this->rowAttributes($import, $row, $index + 1));
+            $this->rowIdentityService->upsertRow($import, $this->rowAttributes($import, $row, $index + 1));
         }
 
         return $import;

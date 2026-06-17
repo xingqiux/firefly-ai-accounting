@@ -126,6 +126,9 @@ final class ActionController extends Controller
         }
 
         $billStatementRow->editable_data = $editable;
+        if ([] !== $validated) {
+            $billStatementRow->user_modified_at = now('Asia/Shanghai');
+        }
         $billStatementRow->save();
 
         return response()->json(['data' => $this->statementRowResource($billStatementRow->refresh())]);

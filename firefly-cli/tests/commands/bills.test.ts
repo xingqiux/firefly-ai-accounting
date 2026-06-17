@@ -165,6 +165,7 @@ describe('bill inbox commands', () => {
       summary: {
         total: 117,
         by_status: { pending: 117 },
+        by_duplicate_state: { unique: 100, duplicate: 15, conflict: 2 },
         amounts: { expense: '99.00', income: '0.00', net: '-99.00' },
       },
       data: [],
@@ -268,9 +269,19 @@ describe('bill inbox commands', () => {
 
   test('reviews statement rows before importing through the Firefly API', async () => {
     const fetchMock = mockJsonFetch({
-      summary: { total: 117, pending: 117, importable: 100 },
+      summary: {
+        total: 117,
+        pending: 117,
+        importable: 100,
+        duplicate_candidates: 15,
+        conflict_candidates: 2,
+        preserved_user_edits: 3,
+      },
       new_candidates: [],
       existing_candidates: [],
+      duplicate_candidates: [],
+      conflict_candidates: [],
+      preserved_user_edits: [],
       transfer_candidates: [],
       refund_pairs: [],
       needs_user_note: [],
