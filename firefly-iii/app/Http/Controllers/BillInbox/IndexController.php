@@ -76,6 +76,7 @@ class IndexController extends Controller
             'currentStatus' => $status,
             'mailboxStatus' => $this->mailboxStatus(),
             'statusLabels'   => $this->statusLabels(),
+            'statusClasses'  => $this->statusClasses(),
             'builtInChannels'=> $this->channelRegistry->settingsChannels(),
         ]);
     }
@@ -121,6 +122,7 @@ class IndexController extends Controller
             ],
             'subTitle'     => sprintf('任务 #%d', $billTask->id),
             'statusLabels' => $this->statusLabels(),
+            'statusClasses'=> $this->statusClasses(),
             'eventLabels'  => $this->eventLabels(),
         ]);
     }
@@ -400,6 +402,22 @@ class IndexController extends Controller
             'ignored'      => '已忽略',
             'cleaned'      => '已归档',
             'pending'      => '待存入',
+        ];
+    }
+
+    private function statusClasses(): array
+    {
+        return [
+            'received'     => 'label-warning',
+            'ready'        => 'label-warning',
+            'needs_secret' => 'label-warning',
+            'parsed'       => 'label-primary',
+            'imported'     => 'label-success',
+            'failed'       => 'label-danger',
+            'unknown'      => 'label-danger',
+            'ignored'      => 'label-default',
+            'cleaned'      => 'label-default',
+            'pending'      => 'label-warning',
         ];
     }
 

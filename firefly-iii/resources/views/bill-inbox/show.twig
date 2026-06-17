@@ -20,7 +20,7 @@
                     <table class="table table-striped">
                         <tr>
                             <td style="width: 160px;">状态</td>
-                            <td><strong>{{ statusLabels[task.status]|default(task.status) }}</strong></td>
+                            <td><span class="label {{ statusClasses[task.status]|default('label-info') }}">{{ statusLabels[task.status]|default(task.status) }}</span></td>
                         </tr>
                         <tr>
                             <td>来源</td>
@@ -167,7 +167,7 @@
                                         <td>{{ row.direction|default('-') }}</td>
                                         <td>{{ row.amount|default('-') }}</td>
                                         <td>{{ row.payment_method|default('-') }}</td>
-                                        <td>{{ statusLabels[row.status]|default(row.status) }}</td>
+                                        <td><span class="label {{ statusClasses[row.status]|default('label-info') }}">{{ statusLabels[row.status]|default(row.status) }}</span></td>
                                         <td>
                                             <a class="btn btn-xs btn-default" data-toggle="collapse" href="#bill-row-{{ row.id }}">
                                                 <span class="fa fa-pencil fa-fw"></span> 编辑

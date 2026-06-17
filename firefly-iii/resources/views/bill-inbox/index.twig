@@ -65,7 +65,7 @@
                         <a class="btn btn-default {% if currentStatus == '' %}active{% endif %}" href="{{ route('bill-inbox.index') }}">全部</a>
                         {% for status, total in stats %}
                             <a class="btn btn-default {% if currentStatus == status %}active{% endif %}" href="{{ route('bill-inbox.index', {status: status}) }}">
-                                {{ statusLabels[status]|default(status) }} <span class="badge">{{ total }}</span>
+                                {{ statusLabels[status]|default(status) }} <span class="label {{ statusClasses[status]|default('label-info') }}">{{ total }}</span>
                             </a>
                         {% endfor %}
                     </div>
@@ -97,17 +97,7 @@
                                         <td><input type="checkbox" name="task_ids[]" value="{{ task.id }}"></td>
                                         <td>#{{ task.id }}</td>
                                         <td>
-                                            {% if task.status == 'needs_secret' %}
-                                                <span class="label label-warning">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                            {% elseif task.status == 'failed' or task.status == 'unknown' %}
-                                                <span class="label label-danger">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                            {% elseif task.status == 'imported' or task.status == 'ready' %}
-                                                <span class="label label-success">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                            {% elseif task.status == 'ignored' %}
-                                                <span class="label label-default">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                            {% else %}
-                                                <span class="label label-info">{{ statusLabels[task.status]|default(task.status) }}</span>
-                                            {% endif %}
+                                            <span class="label {{ statusClasses[task.status]|default('label-info') }}">{{ statusLabels[task.status]|default(task.status) }}</span>
                                         </td>
                                         <td>{{ task.source }}{% if task.profile_id %}<br><small class="text-muted">{{ task.profile_id }}</small>{% endif %}</td>
                                         <td>

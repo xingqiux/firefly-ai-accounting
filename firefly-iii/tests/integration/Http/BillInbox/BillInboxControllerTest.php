@@ -125,6 +125,42 @@ final class BillInboxControllerTest extends TestCase
         $filtered->assertDontSeeText('cleaned');
     }
 
+    public function testIndexUsesDistinctStatusColorsForParsedArchivedAndPendingTasks(): void
+    {
+        BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'alipay',
+            'profile_id'  => 'alipay-statement',
+            'status'      => 'parsed',
+            'received_at' => Carbon::parse('2026-06-12 18:26:00', 'Asia/Shanghai'),
+            'summary'     => '已解析支付宝交易流水',
+        ]);
+        BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'wechat',
+            'profile_id'  => 'wechat-pay-statement',
+            'status'      => 'ready',
+            'received_at' => Carbon::parse('2026-06-12 19:26:00', 'Asia/Shanghai'),
+            'summary'     => '待处理微信支付账单',
+        ]);
+        BillTask::query()->create([
+            'user_id'     => $this->user->id,
+            'source'      => 'cmb',
+            'profile_id'  => 'cmb-transaction-statement',
+            'status'      => 'cleaned',
+            'received_at' => Carbon::parse('2026-06-12 20:26:00', 'Asia/Shanghai'),
+            'summary'     => '已归档招商流水',
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.index', ['status' => 'cleaned']));
+
+        $response->assertStatus(200);
+        $response->assertSee('已解析 <span class="label label-primary">1</span>', false);
+        $response->assertSee('待处理 <span class="label label-warning">1</span>', false);
+        $response->assertSee('已归档 <span class="label label-default">1</span>', false);
+        $response->assertSee('<span class="label label-default">已归档</span>', false);
+    }
+
     public function testShowDisplaysTaskDetailAndSecretForm(): void
     {
         $response = $this->actingAs($this->user)->get(route('bill-inbox.show', [$this->task->id]));
