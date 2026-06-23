@@ -76,6 +76,10 @@ final class IndexController extends Controller
      */
     public function index(Request $request, string $objectType, ?Carbon $start = null, ?Carbon $end = null): Factory|\Illuminate\Contracts\View\View
     {
+        if ('all' === $objectType) {
+            return $this->indexAll($request, $objectType);
+        }
+
         if ('transfers' === $objectType) {
             $objectType = 'transfer';
         }
@@ -158,7 +162,7 @@ final class IndexController extends Controller
         $start        = $first instanceof TransactionJournal ? $first->date : new Carbon();
         $last         = $this->repository->getLast();
         $end          = $last instanceof TransactionJournal ? $last->date : today(config('app.timezone'));
-        $subTitle     = (string) trans('firefly.all_'.$objectType);
+        $subTitle     = 'all' === $objectType ? (string) trans('firefly.all_transactions') : (string) trans('firefly.all_'.$objectType);
 
         /** @var GroupCollectorInterface $collector */
         $collector    = app(GroupCollectorInterface::class);

@@ -54,6 +54,7 @@ return [
     'deposit_list'           => '收入、收入和收入',
     'transfer_list'          => '转账',
     'transfers_list'         => '转账',
+    'all_list'               => '全部交易',
     'reconciliation_list'    => '调节',
     'create_withdrawal'      => '创建新支出',
     'create_deposit'         => '创建新收入',

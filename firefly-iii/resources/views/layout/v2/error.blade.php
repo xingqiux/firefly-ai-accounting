@@ -7,9 +7,9 @@
     <base href="{{ route('index') }}/"/>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>{{ $errorTitle }} - Firefly III</title>
+    <title>{{ $errorTitle }} - 谷仓</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="title" content="{{ $errorTitle }} - Firefly III">
+    <meta name="title" content="{{ $errorTitle }} - 谷仓">
 
     <!-- copy of head.blade.php -->
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -74,12 +74,12 @@
 <body class="container bg-body-secondary">
 <div class="row">
     <div class="col mt-3">
-        <img src="images/logo-session.png" width="68" height="100" alt="Firefly III Logo" title="Firefly III"/><br>
+        <img src="images/logo-session.png" width="68" height="100" alt="谷仓 Logo" title="谷仓"/><br>
     </div>
 </div>
 <div class="row">
     <div class="col">
-        <h1><strong>Firefly</strong> III - {{ $errorTitle }} :(</h1>
+        <h1><strong>谷仓</strong> - {{ $errorTitle }} :(</h1>
     </div>
 </div>
 <div class="row">

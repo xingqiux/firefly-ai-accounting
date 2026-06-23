@@ -36,9 +36,9 @@
         {% if fireflyiiiconfig('use_running_balance', true) %}
         <th class="text-right">{{ trans('list.running_balance') }}</th>
         {% endif %}
+        <th>{{ trans('list.destination_account') }}</th>
         <th>{{ trans('list.date') }}</th>
         <th>{{ trans('list.source_account') }}</th>
-        <th>{{ trans('list.destination_account') }}</th>
         {% if showCategory %}
             <th class="hidden-xs">{{ trans('list.category') }}</th>
         {% endif %}
@@ -344,28 +344,40 @@
                 </td>
                 {% endif %}
                 <td class="{{ className }}">
-                    {{ transaction.date.isoFormat(monthAndDayFormat) }}
-                </td>
-                <td class="{{ className }}">
-                    {% if 'Cash account' == transaction.source_account_type %}
-                        <span class="text-success">({{ 'cash'|_ }})</span>
+                    {% set accountPaletteClasses = [
+                        'gc-account-palette-0', 'gc-account-palette-1', 'gc-account-palette-2', 'gc-account-palette-3', 'gc-account-palette-4', 'gc-account-palette-5',
+                        'gc-account-palette-6', 'gc-account-palette-7', 'gc-account-palette-8', 'gc-account-palette-9', 'gc-account-palette-10', 'gc-account-palette-11',
+                        'gc-account-palette-12', 'gc-account-palette-13', 'gc-account-palette-14', 'gc-account-palette-15', 'gc-account-palette-16', 'gc-account-palette-17',
+                        'gc-account-palette-18', 'gc-account-palette-19', 'gc-account-palette-20', 'gc-account-palette-21', 'gc-account-palette-22', 'gc-account-palette-23',
+                        'gc-account-palette-24', 'gc-account-palette-25', 'gc-account-palette-26', 'gc-account-palette-27', 'gc-account-palette-28', 'gc-account-palette-29',
+                        'gc-account-palette-30', 'gc-account-palette-31', 'gc-account-palette-32', 'gc-account-palette-33', 'gc-account-palette-34', 'gc-account-palette-35'
+                    ] %}
+                    {% set destinationPaletteIndex = ((transaction.destination_account_id|default(0)) * 17 + 11) % 36 %}
+                    {% set destinationPaletteClass = cycle(accountPaletteClasses, destinationPaletteIndex) %}
+                    {% if 'Cash account' == transaction.destination_account_type %}
+                        <span class="gc-account-pill gc-account-pill-cash {{ destinationPaletteClass }}">({{ 'cash'|_ }})</span>
                     {% else %}
-                        <a href="{{ route('accounts.show', [transaction.source_account_id|default(1)]) }}"
-                           title="{{ transaction.source_account_iban|default(transaction.source_account_name) }}">{{ transaction.source_account_name }}</a>
+                        <a class="gc-account-pill gc-account-pill-destination {{ destinationPaletteClass }}" href="{{ route('accounts.show', [transaction.destination_account_id|default(1)]) }}"
+                           title="{{ transaction.destination_account_iban|default(transaction.destination_account_name) }}">{{ transaction.destination_account_name }}</a>
                     {% endif %}
                 </td>
                 <td class="{{ className }}">
-                    {% if 'Cash account' == transaction.destination_account_type %}
-                        <span class="text-success">({{ 'cash'|_ }})</span>
+                    {{ transaction.date.isoFormat(monthAndDayFormat) }}
+                </td>
+                <td class="{{ className }}">
+                    {% set sourcePaletteIndex = ((transaction.source_account_id|default(0)) * 17 + 11) % 36 %}
+                    {% set sourcePaletteClass = cycle(accountPaletteClasses, sourcePaletteIndex) %}
+                    {% if 'Cash account' == transaction.source_account_type %}
+                        <span class="gc-account-pill gc-account-pill-cash {{ sourcePaletteClass }}">({{ 'cash'|_ }})</span>
                     {% else %}
-                        <a href="{{ route('accounts.show', [transaction.destination_account_id|default(1)]) }}"
-                           title="{{ transaction.destination_account_iban|default(transaction.destination_account_name) }}">{{ transaction.destination_account_name }}</a>
+                        <a class="gc-account-pill gc-account-pill-source {{ sourcePaletteClass }}" href="{{ route('accounts.show', [transaction.source_account_id|default(1)]) }}"
+                           title="{{ transaction.source_account_iban|default(transaction.source_account_name) }}">{{ transaction.source_account_name }}</a>
                     {% endif %}
                 </td>
                 {% if showCategory %}
                     <td class="hidden-xs {{ className }}">
                         {% if transaction.category_id %}
-                            <a href="{{ route('categories.show', [transaction.category_id]) }}"
+                            <a class="gc-functional-pill gc-functional-pill-muted" href="{{ route('categories.show', [transaction.category_id]) }}"
                                title="{{ transaction.category_name }}">{{ transaction.category_name }}</a>
                         {% endif %}
                     </td>
@@ -373,7 +385,7 @@
                 {% if showBudget %}
                     <td class="hidden-xs {{ className }}">
                         {% if transaction.budget_id %}
-                            <a href="{{ route('budgets.show', [transaction.budget_id]) }}"
+                            <a class="gc-functional-pill gc-functional-pill-info" href="{{ route('budgets.show', [transaction.budget_id]) }}"
                                title="{{ transaction.budget_name }}">{{ transaction.budget_name }}</a>
                         {% endif %}
                     </td>

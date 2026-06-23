@@ -51,7 +51,7 @@ final class HomeController extends Controller
     public function __construct()
     {
         parent::__construct();
-        app('view')->share('title', 'Firefly III');
+        app('view')->share('title', '谷仓');
         app('view')->share('mainTitleIcon', 'fa-fire');
         $this->middleware(Installer::class);
     }
@@ -171,7 +171,7 @@ final class HomeController extends Controller
         foreach ($accounts as $account) {
             /** @var GroupCollectorInterface $collector */
             $collector      = app(GroupCollectorInterface::class);
-            $collector->setAccounts(new Collection()->push($account))->withAccountInformation()->setRange($start, $end)->setLimit(10)->setPage(1);
+            $collector->setAccounts(new Collection()->push($account))->withAccountInformation()->setRange($start, $end)->setLimit(30)->setPage(1);
             $set            = $collector->getExtractedJournals();
             $transactions[] = ['transactions' => $set, 'account' => $account];
         }

@@ -27,6 +27,7 @@ use Diglactic\Breadcrumbs\Generator;
 use FireflyIII\Models\Account;
 use FireflyIII\Models\Attachment;
 use FireflyIII\Models\Bill;
+use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Models\Budget;
 use FireflyIII\Models\BudgetLimit;
@@ -1390,6 +1391,14 @@ Breadcrumbs::for(
     static function (Generator $breadcrumbs, BillTask $billTask): void {
         $breadcrumbs->parent('bill-inbox.index');
         $breadcrumbs->push(sprintf('任务 #%d', $billTask->id), route('bill-inbox.show', [$billTask->id]));
+    }
+);
+
+Breadcrumbs::for(
+    'bill-inbox.artifact.preview',
+    static function (Generator $breadcrumbs, BillTask $billTask, BillArtifact $billArtifact): void {
+        $breadcrumbs->parent('bill-inbox.show', $billTask);
+        $breadcrumbs->push($billArtifact->filename ?? '附件预览', route('bill-inbox.artifact.preview', [$billArtifact->id]));
     }
 );
 

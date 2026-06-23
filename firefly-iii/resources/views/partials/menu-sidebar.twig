@@ -1,4 +1,4 @@
-<ul class="sidebar-menu" data-widget="tree">
+<ul class="sidebar-menu bill-sidebar-static-menu">
     <li class="{{ activeRouteStrict('index') }}">
         <a href="{{ route('index') }}">
             <em class="fa fa-dashboard fa-fw"></em>
@@ -39,7 +39,7 @@
     <li class="header text-uppercase">{{ 'accounting'|_ }}</li>
 
     <li class="{{ activeRoutePartial('transactions') }} treeview menu-open" id="transaction-menu">
-        <a href="#">
+        <a href="{{ route('transactions.index', ['all']) }}">
             <em class="fa fa-exchange fa-fw"></em>
             <span>{{ 'transactions'|_ }}</span>
         </a>

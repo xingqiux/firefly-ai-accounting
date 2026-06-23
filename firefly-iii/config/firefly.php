@@ -395,6 +395,7 @@ return [
         'deposit'    => ['Deposit'],
         'transfer'   => ['Transfer'],
         'transfers'  => ['Transfer'],
+        'all'        => ['Withdrawal', 'Deposit', 'Transfer'],
     ],
     'transactionTypesToShort'              => [
         'Withdrawal'      => 'withdrawal',
@@ -410,6 +411,7 @@ return [
         'deposit'    => 'fa-long-arrow-right',
         'transfer'   => 'fa-exchange',
         'transfers'  => 'fa-exchange',
+        'all'        => 'fa-exchange',
     ],
 
 

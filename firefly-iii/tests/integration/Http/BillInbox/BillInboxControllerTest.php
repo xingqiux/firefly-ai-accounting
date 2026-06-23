@@ -90,7 +90,10 @@ final class BillInboxControllerTest extends TestCase
         $this->assertStringNotContainsString('fa-angle-left pull-right', $html);
         $this->assertStringNotContainsString('fa-angle-right fa-fw', $html);
         $this->assertStringContainsString('bill-sidebar-treeview-menu', $html);
+        $this->assertStringContainsString('sidebar-menu bill-sidebar-static-menu', $html);
+        $this->assertStringNotContainsString('data-widget="tree"', $html);
         $this->assertStringContainsString('padding-left: 35px;', file_get_contents(public_path('v1/css/firefly.css')));
+        $this->assertStringContainsString('display: block !important;', file_get_contents(public_path('v1/css/firefly.css')));
         $response->assertDontSee('Webhook (disabled)');
         $response->assertDontSee('Webhook（已禁用）');
         $response->assertDontSee('webhooks_menu_disabled');
@@ -247,17 +250,31 @@ final class BillInboxControllerTest extends TestCase
         $response = $this->actingAs($this->user)->get(route('bill-inbox.channel', ['source' => 'cmb', 'status' => 'cleaned']));
 
         $response->assertStatus(200);
-        $response->assertSee('<span class="label label-default">已归档</span>', false);
+        $response->assertSee('<span class="label gc-status-archived">已归档</span>', false);
     }
 
     public function testShowDisplaysTaskDetailAndSecretForm(): void
     {
+        Storage::disk('local')->put('artifacts/derived/task-1/statement.csv', "交易时间,金额\n2026-06-01,12.30\n");
+        BillArtifact::query()->create([
+            'bill_task_id' => $this->task->id,
+            'kind'         => 'csv',
+            'filename'     => 'statement.csv',
+            'path'         => 'artifacts/derived/task-1/statement.csv',
+            'checksum'     => 'csv-checksum',
+            'encrypted'    => false,
+        ]);
+
         $response = $this->actingAs($this->user)->get(route('bill-inbox.show', [$this->task->id]));
 
         $response->assertStatus(200);
         $response->assertSee('账单任务 #'.$this->task->id);
         $response->assertSee('需要密码或验证码');
         $response->assertSee('statement.zip');
+        $response->assertSee('statement.csv');
+        $response->assertSee('预览');
+        $response->assertSee(route('bill-inbox.artifact.preview', [$this->task->artifacts()->where('kind', 'csv')->firstOrFail()->id]), false);
+        $response->assertDontSee(route('bill-inbox.artifact.preview', [$this->task->artifacts()->where('kind', 'zip')->firstOrFail()->id]), false);
         $response->assertSee('下载');
         $response->assertSee('流水明细');
         $response->assertSee('处理记录');

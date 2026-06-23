@@ -783,16 +783,18 @@ class IndexController extends Controller
     private function statusClasses(): array
     {
         return [
-            'received'     => 'label-warning',
-            'ready'        => 'label-warning',
-            'needs_secret' => 'label-warning',
-            'parsed'       => 'label-primary',
-            'imported'     => 'label-success',
-            'failed'       => 'label-danger',
-            'unknown'      => 'label-danger',
-            'ignored'      => 'label-default',
-            'cleaned'      => 'label-default',
-            'pending'      => 'label-warning',
+            'received'     => 'gc-status-received',
+            'ready'        => 'gc-status-ready',
+            'needs_secret' => 'gc-status-attention',
+            'parsed'       => 'gc-status-parsed',
+            'imported'     => 'gc-status-imported',
+            'failed'       => 'gc-status-failed',
+            'unknown'      => 'gc-status-failed',
+            'ignored'      => 'gc-status-archived',
+            'cleaned'      => 'gc-status-archived',
+            'pending'      => 'gc-status-pending',
+            'needs_split'  => 'gc-status-attention',
+            'split'        => 'gc-status-parsed',
         ];
     }
 

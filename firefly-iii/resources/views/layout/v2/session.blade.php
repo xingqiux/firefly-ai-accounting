@@ -68,8 +68,8 @@
 <body class="login-page bg-body-secondary">
 <div class="login-box">
     <div class="login-logo">
-        <img src="images/logo-session.png" width="68" height="100" alt="Firefly III Logo" title="Firefly III" /><br>
-        <a href='{{ route('index')  }}'><b>Firefly</b> III</a> </div>
+        <img src="images/logo-session.png" width="68" height="100" alt="谷仓 Logo" title="谷仓" /><br>
+        <a href='{{ route('index')  }}'><b>谷仓</b></a> </div>
     @yield('content')
 
 

@@ -78,7 +78,9 @@
                 </div>
                 <div class="box-body no-padding">
                     <div class="p-2">
-                        <a href="{{ route('transactions.create', [objectType]) }}" class="btn btn-success"><span class="fa fa-plus fa-fw"></span> {{ 'create_new_transaction'|_ }}</a>
+                        {% if objectType != 'all' %}
+                            <a href="{{ route('transactions.create', [objectType]) }}" class="btn btn-success"><span class="fa fa-plus fa-fw"></span> {{ 'create_new_transaction'|_ }}</a>
+                        {% endif %}
                     </div>
                     {# actual list #}
                     {% include 'list.groups' %}
