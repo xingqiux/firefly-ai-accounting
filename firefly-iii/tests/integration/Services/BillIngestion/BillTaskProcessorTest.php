@@ -12,6 +12,7 @@ use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillTaskProcessor;
 use FireflyIII\Services\BillIngestion\BillStatementRowIdentityService;
+use FireflyIII\Services\BillIngestion\BocStatementImportService;
 use FireflyIII\Services\BillIngestion\CmbStatementImportService;
 use FireflyIII\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -178,27 +179,123 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('请输入招商银行App“流水打印-申请记录”中的账单解压码', $task->currentSecretChallenge->prompt);
     }
 
-    public function testBocReadyTaskWithSecretWaitsForPdfMapping(): void
+    public function testBocReadyTaskWithSecretExtractsPdfTextForMapping(): void
     {
+        Storage::fake('local');
         $task = $this->createTask('ready', 'boc', 'boc-transaction-statement');
-        BillArtifact::query()->create([
+        $pdfPath = 'bill-inbox/1/20260617183108456/attachments/01-KA020003687d1a432d80001.pdf';
+        Storage::disk('local')->put($pdfPath, 'encrypted pdf bytes');
+        $pdf = BillArtifact::query()->create([
             'bill_task_id' => $task->id,
             'kind'         => 'pdf',
-            'filename'     => 'KA020003687d1a432d8001.pdf',
+            'filename'     => 'KA020003687d1a432d80001.pdf',
+            'path'         => $pdfPath,
             'encrypted'    => true,
             'metadata'     => ['password_source' => 'boc_app_statement_record'],
         ]);
 
-        $processed = app(BillTaskProcessor::class)->process($task, 'open-secret');
+        $oldPath = getenv('PATH') ?: '';
+        $binDir  = sys_get_temp_dir().'/fake-pdftotext-'.bin2hex(random_bytes(4));
+        mkdir($binDir);
+        $sampleText = $this->bocStatementPdfText();
+        file_put_contents($binDir.'/pdftotext', '#!/bin/sh
+if [ "$1" != "-layout" ] || [ "$2" != "-upw" ] || [ "$3" != "open-secret" ]; then
+  echo "unexpected arguments: $*" >&2
+  exit 2
+fi
+cat <<\'TEXT\'
+'.$sampleText.'
+TEXT
+');
+        chmod($binDir.'/pdftotext', 0755);
+        putenv('PATH='.$binDir.PATH_SEPARATOR.$oldPath);
+
+        try {
+            $processed = app(BillTaskProcessor::class)->process($task, 'open-secret');
+        } finally {
+            putenv('PATH='.$oldPath);
+        }
 
         $this->assertTrue($processed);
 
         $task->refresh();
         $this->assertSame('parsed', $task->status);
-        $this->assertSame('waiting_for_pdf_mapping', $task->metadata['parser_status']);
+        $this->assertSame('parsed', $task->metadata['parser_status']);
+        $this->assertSame(1, $task->metadata['extracted_text_artifact_count']);
+        $this->assertSame(8, $task->metadata['parsed_row_count']);
+        $this->assertArrayNotHasKey('secret', $task->metadata);
+        $this->assertArrayNotHasKey('password', $task->metadata);
         $this->assertSame('task.parsed', $task->events()->latest('id')->first()->event_type);
-        $this->assertSame(0, BillStatementImport::query()->count());
-        $this->assertSame(0, BillStatementRow::query()->count());
+        $this->assertSame(1, BillStatementImport::query()->count());
+        $this->assertSame(8, BillStatementRow::query()->count());
+
+        $textArtifact = BillArtifact::query()
+            ->where('derived_from_artifact_id', $pdf->id)
+            ->where('kind', 'txt')
+            ->first()
+        ;
+        $this->assertInstanceOf(BillArtifact::class, $textArtifact);
+        $this->assertSame('boc_pdf_text_extract', $textArtifact->metadata['source']);
+        $this->assertSame('parsed', $textArtifact->metadata['parser_status']);
+        $this->assertTrue($textArtifact->metadata['internal']);
+        $this->assertFalse($textArtifact->encrypted);
+        Storage::disk('local')->assertExists($textArtifact->path);
+        $this->assertStringContainsString('中国银行交易流水', Storage::disk('local')->get($textArtifact->path));
+    }
+
+    public function testBocPdfTextParsesIntoEditableImportRows(): void
+    {
+        Storage::fake('local');
+        $task = $this->createTask('parsed', 'boc', 'boc-transaction-statement');
+        $path = 'bill-inbox/1/derived/boc-statement.txt';
+        Storage::disk('local')->put($path, $this->bocStatementPdfText());
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'txt',
+            'filename'     => 'boc-statement.txt',
+            'path'         => $path,
+            'encrypted'    => false,
+            'metadata'     => [
+                'source'   => 'boc_pdf_text_extract',
+                'internal' => true,
+            ],
+        ]);
+
+        $import = app(BocStatementImportService::class)->importExtractedText($artifact, $this->bocStatementPdfText());
+
+        $this->assertSame('boc', $import->source);
+        $this->assertSame('boc-transaction-statement', $import->profile_id);
+        $this->assertSame('2026-06-17 16:44:08', $import->exported_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-06-01', $import->period_start->format('Y-m-d'));
+        $this->assertSame('2026-06-17', $import->period_end->format('Y-m-d'));
+        $this->assertSame(8, $import->row_count);
+        $this->assertSame('boc-transaction-202606171644-20260601_20260617.txt', $import->archived_filename);
+
+        $rows = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->get();
+        $this->assertCount(8, $rows);
+
+        $first = $rows->first();
+        $this->assertInstanceOf(BillStatementRow::class, $first);
+        $this->assertSame('2026-06-16 16:46:14', $first->occurred_at->format('Y-m-d H:i:s'));
+        $this->assertSame('代付', $first->platform_category);
+        $this->assertSame('安徽三联学院', $first->counterparty);
+        $this->assertSame('184201139156', $first->counterparty_account);
+        $this->assertSame('收入', $first->direction);
+        $this->assertSame('100', (string) $first->amount);
+        $this->assertSame('安徽三联学院', $first->source_name);
+        $this->assertSame('中国银行借记卡(4045)', $first->destination_name);
+
+        $expense = $rows->firstWhere('direction', '支出');
+        $this->assertInstanceOf(BillStatementRow::class, $expense);
+        $this->assertSame('支付宝-上海哈啰普惠科技有限公司', $expense->counterparty);
+        $this->assertSame('网上快捷支付', $expense->platform_category);
+        $this->assertSame('5.9', (string) $expense->amount);
+        $this->assertSame('中国银行借记卡(4045)', $expense->source_name);
+        $this->assertSame('支付宝-上海哈啰普惠科技有限公司', $expense->destination_name);
+
+        $artifact->refresh();
+        $this->assertSame('boc-transaction-202606171644-20260601_20260617.txt', $artifact->filename);
+        Storage::disk('local')->assertExists('bill-inbox/'.$task->id.'/derived/boc-transaction-202606171644-20260601_20260617.txt');
     }
 
     public function testCmbReadyTaskWithSecretExtractsZipWithoutImportRowsYet(): void
@@ -1021,6 +1118,36 @@ Date           Currency                     Balance          Transaction Type   
 2026-06-04   CNY        -12.51        5.94      快捷支付
                                                                    司
 
+TEXT;
+    }
+
+    private function bocStatementPdfText(): string
+    {
+        return <<<'TEXT'
+                                                    中国银行交易流水明细清单
+ 交易区间： 2026-06-01 至 2026-06-17     客户姓名： 测试用户                                                                   页数:   1 /1
+ 借记卡号： 6216631500001264045         借方发生数： 58.31                     贷方发生数： 157.47                              行数:   8
+ 账号： 179768524732                  按收支筛选： 全部                        按币种筛选： 全部                                  打印时间： 2026/06/17 16:44:08
+
+   记账日期         记账时间         币别        金额           余额           交易名称     渠道          网点名称                附言         对方账户名       对方卡号/账号                  对方开户行
+   2026-06-16   16:46:14     人民币         100.00       100.44       代付     网上银行    -------------------     代付         安徽三联学院        184201139156       中国银行合肥经济技术开
+                                                                                                                                                          发区支行营业部
+   2026-06-13   18:43:59     人民币            -5.90         0.44   网上快捷支付   银企对接    ------------------- 支付宝-上海哈啰普惠科 支付宝-上海哈啰普惠     48889202         N    -------------------
+                                                                                                          技有限公司      科技有限公司
+   2026-06-13   10:29:00     人民币         -13.67           6.34   网上快捷支付   银企对接    -------------------   支付宝-冉小龙     支付宝-冉小龙      Z2007933000010N       -------------------
+
+   2026-06-13   10:28:06     人民币            12.87        20.01   网上快捷退款   银企对接    -------------------   支付宝-黄章振      支付宝-黄章振      80001210001303       -------------------
+
+   2026-06-13   10:28:04     人民币         -12.87           7.14   网上快捷支付   银企对接    -------------------   支付宝-黄章振      支付宝-黄章振     Z2007933000010N       -------------------
+
+   2026-06-12   09:43:50     人民币             7.50        20.01     代付     网上银行    -------------------     代付         安徽三联学院        184201139156       中国银行合肥经济技术开
+                                                                                                                                                          发区支行营业部
+   2026-06-10   11:03:41     人民币         -25.87          12.51   网上快捷支付   银企对接    ------------------- 支付宝-上海拉扎斯信息 支付宝-上海拉扎斯信     Z2007933000010N       -------------------
+                                                                                                          科技有限公司     息科技有限公司
+   2026-06-10   11:03:31     人民币            37.10        38.38   网上快捷提现   银企对接    ------------------- --微信零钱提现-0001   测试用户          11111078256               财付通
+
+
+                                                     --------------------END--------------------
 TEXT;
     }
 

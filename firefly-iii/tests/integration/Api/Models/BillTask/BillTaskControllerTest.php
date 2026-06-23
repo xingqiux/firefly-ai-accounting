@@ -179,6 +179,40 @@ final class BillTaskControllerTest extends TestCase
         $events->assertJsonPath('data.0.attributes.event_type', 'task.created');
     }
 
+    public function testDoesNotExposeInternalBocTextExtractionArtifact(): void
+    {
+        $original = $this->task->artifacts()->firstOrFail();
+        $internal = BillArtifact::query()->create([
+            'bill_task_id'              => $this->task->id,
+            'derived_from_artifact_id'  => $original->id,
+            'kind'                      => 'txt',
+            'filename'                  => 'statement.txt',
+            'path'                      => 'artifacts/internal/task-1/statement.txt',
+            'checksum'                  => 'internal-text-checksum',
+            'encrypted'                 => false,
+            'metadata'                  => [
+                'source'   => 'boc_pdf_text_extract',
+                'internal' => true,
+            ],
+        ]);
+
+        $list = $this->getJson(route('api.v1.bill-tasks.artifacts', ['billTask' => $this->task->id]));
+        $list->assertStatus(200);
+        $list->assertJsonCount(1, 'data');
+        $list->assertJsonPath('data.0.attributes.filename', 'statement.zip');
+        $list->assertJsonMissingPath('data.1');
+        $this->assertStringNotContainsString('statement.txt', $list->getContent());
+
+        $show = $this->getJson(route('api.v1.bill-tasks.show', ['billTask' => $this->task->id]));
+        $show->assertStatus(200);
+        $this->assertStringNotContainsString('statement.txt', $show->getContent());
+
+        Storage::fake('local');
+        Storage::disk('local')->put((string) $internal->path, 'internal text');
+        $download = $this->get(route('api.v1.bill-artifacts.download', ['billArtifact' => $internal->id]));
+        $download->assertStatus(404);
+    }
+
     public function testSecretSubmitConsumesChallengeAndMarksTaskReady(): void
     {
         $this->actingAs($this->user, 'api');
@@ -406,6 +440,7 @@ final class BillTaskControllerTest extends TestCase
         $response->assertJsonPath('data.attributes.built_in_channels.0.source', 'alipay');
         $response->assertJsonPath('data.attributes.built_in_channels.1.source', 'wechat');
         $response->assertJsonPath('data.attributes.built_in_channels.2.source', 'cmb');
+        $response->assertJsonPath('data.attributes.built_in_channels.3.source', 'boc');
     }
 
     public function testUpdatesBillInboxSettings(): void
@@ -433,7 +468,7 @@ final class BillTaskControllerTest extends TestCase
         $this->assertSame('app-password', Preferences::getEncrypted('bill_inbox_mailbox_password')->data);
         $this->assertSame('', Preferences::get('bill_inbox_quick_gmail_label')->data);
         $this->assertSame('', Preferences::get('bill_inbox_quick_keywords')->data);
-        $this->assertCount(3, Preferences::get('bill_inbox_processing_rules')->data);
+        $this->assertCount(4, Preferences::get('bill_inbox_processing_rules')->data);
     }
 
     public function testSyncBillInboxReturnsMailboxAndProcessingCounts(): void

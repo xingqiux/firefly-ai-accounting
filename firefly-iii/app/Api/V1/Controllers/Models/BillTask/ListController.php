@@ -17,7 +17,7 @@ final class ListController extends Controller
 
     public function artifacts(BillTask $billTask): JsonResponse
     {
-        return response()->json($this->artifactCollectionResponse($billTask->artifacts()->orderBy('id')->get()));
+        return response()->json($this->artifactCollectionResponse($billTask->artifacts()->visibleToUser()->orderBy('id')->get()));
     }
 
     public function events(BillTask $billTask): JsonResponse

@@ -43,7 +43,7 @@ final class ShowController extends Controller
     {
         $billTask->load([
             'mailMessage',
-            'artifacts'              => fn ($query) => $query->orderBy('id'),
+            'artifacts'              => fn ($query) => $query->visibleToUser()->orderBy('id'),
             'statementImports'       => fn ($query) => $query->orderBy('id'),
             'currentSecretChallenge',
             'events'                 => fn ($query) => $query->orderBy('id'),

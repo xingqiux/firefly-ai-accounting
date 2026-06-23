@@ -5,15 +5,21 @@ declare(strict_types=1);
 namespace FireflyIII\Services\BillIngestion\Channels;
 
 use Carbon\Carbon;
+use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillMailMessage;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillMailAttachment;
 use FireflyIII\Services\BillIngestion\BillSourceChannel;
+use FireflyIII\Services\BillIngestion\BocStatementImportService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
+use Symfony\Component\Process\Process;
 
 class BocTransactionBillSourceChannel implements BillSourceChannel
 {
+    public function __construct(private readonly BocStatementImportService $importService) {}
+
     public function source(): string
     {
         return 'boc';
@@ -42,7 +48,10 @@ class BocTransactionBillSourceChannel implements BillSourceChannel
      */
     public function mailboxSearchCriteria(): array
     {
-        return ['SUBJECT "中国银行交易流水"'];
+        return [
+            'X-GM-RAW "filename:pdf"',
+            'SUBJECT "中国银行交易流水"',
+        ];
     }
 
     /**
@@ -136,15 +145,22 @@ class BocTransactionBillSourceChannel implements BillSourceChannel
             return true;
         }
 
+        $created                          = $this->extractPdfTextArtifacts($task, (string) $secret);
+        $rowCount                         = $task->statementRows()->count();
         $metadata                         = is_array($task->metadata) ? $task->metadata : [];
-        $metadata['parser_status']        = 'waiting_for_pdf_mapping';
+        $metadata['parser_status']        = $rowCount > 0 ? 'parsed' : 'waiting_for_pdf_mapping';
+        $metadata['extracted_text_artifact_count'] = $created;
+        $metadata['parsed_row_count']      = $rowCount;
         $metadata['password_submitted_at'] = Carbon::now('Asia/Shanghai')->toAtomString();
         $task->metadata                   = $metadata;
         $task->status                     = 'parsed';
         $task->error_code                 = null;
         $task->error_message              = null;
         $task->save();
-        $this->appendEvent($task, 'task.parsed', '中国银行账单密码已提交，等待 PDF 字段映射确认');
+        $message = $rowCount > 0
+            ? sprintf('中国银行账单已解析，生成 %d 条流水明细', $rowCount)
+            : '中国银行账单密码已提交，等待 PDF 字段映射确认';
+        $this->appendEvent($task, 'task.parsed', $message);
 
         return true;
     }
@@ -177,6 +193,72 @@ class BocTransactionBillSourceChannel implements BillSourceChannel
         $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
         return '' === $extension ? 'attachment' : $extension;
+    }
+
+    private function extractPdfTextArtifacts(BillTask $task, string $secret): int
+    {
+        $created = 0;
+        $pdfs    = $task->artifacts()
+            ->where('kind', 'pdf')
+            ->where('encrypted', true)
+            ->orderBy('id')
+            ->get()
+        ;
+
+        foreach ($pdfs as $pdf) {
+            $existingTextArtifact = $pdf->children()
+                ->where('kind', 'txt')
+                ->where('metadata->source', 'boc_pdf_text_extract')
+                ->orderBy('id')
+                ->first()
+            ;
+            if ($existingTextArtifact instanceof BillArtifact) {
+                if (!$existingTextArtifact->statementImport && null !== $existingTextArtifact->path && Storage::disk('local')->exists($existingTextArtifact->path)) {
+                    $this->importService->importExtractedText($existingTextArtifact, Storage::disk('local')->get($existingTextArtifact->path));
+                }
+
+                continue;
+            }
+            if (null === $pdf->path || '' === $pdf->path || !Storage::disk('local')->exists($pdf->path)) {
+                throw new RuntimeException('中国银行账单 PDF 文件不存在。');
+            }
+
+            $text     = $this->extractPdfText(Storage::disk('local')->path($pdf->path), $secret);
+            $filename = $this->textFilename((string) $pdf->filename);
+            $path     = sprintf('bill-inbox/%d/derived/%s', $task->id, $filename);
+            Storage::disk('local')->put($path, $text);
+
+            $textArtifact = $pdf->children()->create([
+                'bill_task_id'              => $task->id,
+                'kind'                      => 'txt',
+                'filename'                  => $filename,
+                'path'                      => $path,
+                'checksum'                  => hash('sha256', $text),
+                'encrypted'                 => false,
+                'metadata'                  => [
+                    'source'          => 'boc_pdf_text_extract',
+                    'internal'        => true,
+                    'parser_status'   => 'waiting_for_pdf_mapping',
+                    'text_extractor'  => 'pdftotext-layout',
+                    'original_name'   => $pdf->filename,
+                ],
+            ]);
+            $this->importService->importExtractedText($textArtifact, $text);
+            ++$created;
+        }
+
+        return $created;
+    }
+
+    private function extractPdfText(string $path, string $secret): string
+    {
+        $process = new Process(['pdftotext', '-layout', '-upw', $secret, $path, '-']);
+        $process->run();
+        if (!$process->isSuccessful()) {
+            throw new RuntimeException('中国银行账单 PDF 文本提取失败，请确认打开密码是否正确。');
+        }
+
+        return $process->getOutput();
     }
 
     /**
@@ -225,6 +307,14 @@ class BocTransactionBillSourceChannel implements BillSourceChannel
         $filename = preg_replace('/[\/\\\\]+/', '_', basename($filename)) ?: 'boc-transaction-statement.pdf';
 
         return '' === pathinfo($filename, PATHINFO_EXTENSION) ? $filename.'.pdf' : $filename;
+    }
+
+    private function textFilename(string $filename): string
+    {
+        $base = pathinfo($filename, PATHINFO_FILENAME);
+        $base = preg_replace('/[\/\\\\]+/', '_', '' === $base ? 'boc-transaction-statement' : $base) ?: 'boc-transaction-statement';
+
+        return $base.'.txt';
     }
 
     private function appendEvent(BillTask $task, string $eventType, string $message): void

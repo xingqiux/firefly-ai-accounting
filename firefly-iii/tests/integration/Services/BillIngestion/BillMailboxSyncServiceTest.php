@@ -46,6 +46,7 @@ final class BillMailboxSyncServiceTest extends TestCase
             'FROM "service@mail.alipay.com"',
             'FROM "wechatpay@tencent.com"',
             'FROM "95555@message.cmbchina.com"',
+            'X-GM-RAW "filename:pdf"',
             'SUBJECT "中国银行交易流水"',
         ], $registry->mailboxSearchCriteria());
         $this->assertSame('alipay', $registry->find('alipay', 'alipay-statement')?->source());
@@ -227,6 +228,49 @@ final class BillMailboxSyncServiceTest extends TestCase
         Storage::disk('local')->assertExists($artifact->path);
     }
 
+    public function testSyncFindsBocPdfMailWhenChineseSubjectSearchDoesNotReturnUid(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient(
+            [new FakeImapMailMessage('66', $this->bocRawMessage())],
+            [],
+            [
+                'X-GM-RAW "filename:pdf"' => ['66'],
+                'SUBJECT "中国银行交易流水"'   => [],
+            ],
+        );
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox();
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+
+        $this->assertSame(1, $result->scanned);
+        $this->assertSame(1, $result->created);
+        $this->assertContains('X-GM-RAW "filename:pdf"', $client->searches);
+        $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
+        $this->assertSame(1, BillTask::query()->where('source', 'boc')->count());
+    }
+
+    public function testSyncContinuesWhenMailboxDoesNotSupportOneSearchCriterion(): void
+    {
+        Storage::fake('local');
+        $client = new FakeImapBillMailboxClient(
+            [new FakeImapMailMessage('66', $this->bocRawMessage())],
+            [],
+            ['SUBJECT "中国银行交易流水"' => ['66']],
+            ['X-GM-RAW "filename:pdf"'],
+        );
+        $this->app->instance(ImapBillMailboxClient::class, $client);
+        $this->configureMailbox();
+
+        $result = app(BillMailboxSyncService::class)->syncForUser($this->user, 10);
+
+        $this->assertSame(1, $result->scanned);
+        $this->assertSame(1, $result->created);
+        $this->assertSame(0, $result->failed);
+        $this->assertSame(1, BillTask::query()->where('source', 'boc')->count());
+    }
+
     public function testSyncSkipsDuplicateMessages(): void
     {
         Storage::fake('local');
@@ -272,6 +316,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
         $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
+        $this->assertContains('X-GM-RAW "filename:pdf"', $client->searches);
         $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
     }
 
@@ -299,6 +344,7 @@ final class BillMailboxSyncServiceTest extends TestCase
         $this->assertContains('FROM "service@mail.alipay.com"', $client->searches);
         $this->assertContains('FROM "wechatpay@tencent.com"', $client->searches);
         $this->assertContains('FROM "95555@message.cmbchina.com"', $client->searches);
+        $this->assertContains('X-GM-RAW "filename:pdf"', $client->searches);
         $this->assertContains('SUBJECT "中国银行交易流水"', $client->searches);
     }
 
@@ -490,6 +536,12 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
     /** @var array<int, string> */
     private array $missingFolders;
 
+    /** @var array<string, array<int, string>> */
+    private array $criteriaResults;
+
+    /** @var array<int, string> */
+    private array $failingCriteria;
+
     /** @var array<int, string> */
     public array $selectedFolders = [];
 
@@ -502,13 +554,17 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
     public bool $connected = false;
 
     /**
-     * @param array<int, FakeImapMailMessage> $messages
-     * @param array<int, string>              $missingFolders
+     * @param array<int, FakeImapMailMessage>      $messages
+     * @param array<int, string>                   $missingFolders
+     * @param array<string, array<int, string>>    $criteriaResults
+     * @param array<int, string>                   $failingCriteria
      */
-    public function __construct(array $messages, array $missingFolders = [])
+    public function __construct(array $messages, array $missingFolders = [], array $criteriaResults = [], array $failingCriteria = [])
     {
-        $this->messages       = $messages;
-        $this->missingFolders = $missingFolders;
+        $this->messages        = $messages;
+        $this->missingFolders  = $missingFolders;
+        $this->criteriaResults = $criteriaResults;
+        $this->failingCriteria = $failingCriteria;
     }
 
     public function connect(BillMailboxConfig $config): void
@@ -527,6 +583,12 @@ final class FakeImapBillMailboxClient implements ImapBillMailboxClient
     public function search(string $criteria, int $limit): array
     {
         $this->searches[] = $criteria;
+        if (in_array($criteria, $this->failingCriteria, true)) {
+            throw new \RuntimeException(sprintf('Unsupported search criterion: %s', $criteria));
+        }
+        if (array_key_exists($criteria, $this->criteriaResults)) {
+            return array_slice($this->criteriaResults[$criteria], 0, $limit);
+        }
 
         return array_slice(array_map(static fn (FakeImapMailMessage $message): string => $message->uid, $this->messages), 0, $limit);
     }

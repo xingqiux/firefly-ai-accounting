@@ -44,7 +44,13 @@ class BillMailboxSyncService
                 }
 
                 foreach ($this->searchCriteria() as $criteria) {
-                    foreach ($this->client->search($criteria, $limit) as $uid) {
+                    try {
+                        $foundUids = $this->client->search($criteria, $limit);
+                    } catch (\Throwable) {
+                        continue;
+                    }
+
+                    foreach ($foundUids as $uid) {
                         $uids[$uid] = $uid;
                         if (count($uids) >= $limit) {
                             break 3;

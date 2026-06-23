@@ -14,6 +14,10 @@ final class ArtifactController extends Controller
 {
     public function download(BillArtifact $billArtifact): StreamedResponse
     {
+        if ($billArtifact->isInternalProcessingArtifact()) {
+            throw new NotFoundHttpException();
+        }
+
         if (null === $billArtifact->path || '' === $billArtifact->path || !Storage::disk('local')->exists($billArtifact->path)) {
             throw new NotFoundHttpException();
         }
