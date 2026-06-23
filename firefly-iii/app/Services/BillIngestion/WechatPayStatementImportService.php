@@ -33,6 +33,8 @@ class WechatPayStatementImportService
         $artifact->loadMissing('billTask');
         $existing = $artifact->statementImport;
         if ($existing instanceof BillStatementImport) {
+            $this->fillMissingRows($existing, $this->parse($content));
+
             return $existing;
         }
 
@@ -64,6 +66,21 @@ class WechatPayStatementImportService
         }
 
         return $import;
+    }
+
+    /**
+     * @param array{rows:array<int,array<string,string>>} $parsed
+     */
+    private function fillMissingRows(BillStatementImport $import, array $parsed): void
+    {
+        $existing = $import->rows()->pluck('row_number')->map(static fn (int $row): int => $row)->all();
+        foreach ($parsed['rows'] as $index => $row) {
+            $rowNumber = $index + 1;
+            if (in_array($rowNumber, $existing, true)) {
+                continue;
+            }
+            $this->rowIdentityService->upsertRow($import, $this->rowAttributes($import, $row, $rowNumber));
+        }
     }
 
     /**
@@ -163,7 +180,10 @@ class WechatPayStatementImportService
         $description    = $this->clean($row['商品'] ?? '');
         $platformOrder  = $this->clean($row['交易单号'] ?? '');
         $merchantOrder  = $this->clean($row['商户单号'] ?? '');
-        $fireflyType    = $this->fireflyType($direction);
+        $platformCategory = $this->clean($row['交易类型'] ?? '');
+        $fireflyType      = $this->fireflyType($direction);
+        $categoryName     = $this->categoryName($platformCategory);
+        $fireflyDescription = $this->fireflyDescription($description, $counterparty, $direction, $categoryName);
         $sourceName     = null;
         $destinationName = null;
         if ('withdrawal' === $fireflyType) {
@@ -212,10 +232,10 @@ class WechatPayStatementImportService
             'firefly_type'             => $fireflyType,
             'firefly_date'             => $occurredAt,
             'firefly_amount'           => '' === $amount ? null : $amount,
-            'firefly_description'      => '' === $description ? $counterparty : $description,
+            'firefly_description'      => $fireflyDescription,
             'source_name'              => $sourceName,
             'destination_name'         => $destinationName,
-            'category_name'            => $editable['交易类型'],
+            'category_name'            => $categoryName,
             'notes'                    => '' === $platformOrder ? null : sprintf('微信支付交易单号：%s', $platformOrder),
             'tags'                     => ['微信支付'],
         ];
@@ -578,8 +598,32 @@ class WechatPayStatementImportService
         if (str_contains($primary, '零钱')) {
             return '微信零钱';
         }
+        if ('/' === $primary) {
+            return '微信零钱';
+        }
 
         return '' === $primary ? '微信支付' : $primary;
+    }
+
+    private function categoryName(string $category): string
+    {
+        if (str_contains($category, '退款') || str_contains($category, '退回')) {
+            return '退款';
+        }
+        if (str_contains($category, '转账')) {
+            return '转账';
+        }
+
+        return $category;
+    }
+
+    private function fireflyDescription(string $description, string $counterparty, string $direction, string $categoryName): string
+    {
+        if ('转账' === $categoryName && '' !== $counterparty && '/' !== $counterparty) {
+            return '收入' === $direction ? sprintf('收到%s转账', $counterparty) : sprintf('转账给%s', $counterparty);
+        }
+
+        return '' === $description ? $counterparty : $description;
     }
 
     private function clean(string $value): string

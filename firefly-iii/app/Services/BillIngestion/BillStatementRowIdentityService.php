@@ -429,7 +429,9 @@ class BillStatementRowIdentityService
             return '';
         }
 
-        return trim((string) $value);
+        $text = trim((string) $value);
+
+        return in_array($text, ['/', '-', '--'], true) ? '' : $text;
     }
 
     private function normalText(mixed $value): string

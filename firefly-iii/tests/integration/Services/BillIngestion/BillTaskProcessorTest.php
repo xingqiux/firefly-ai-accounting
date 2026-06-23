@@ -11,6 +11,7 @@ use FireflyIII\Models\BillStatementImport;
 use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillTaskProcessor;
+use FireflyIII\Services\BillIngestion\BillStatementRowIdentityService;
 use FireflyIII\Services\BillIngestion\CmbStatementImportService;
 use FireflyIII\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -436,7 +437,7 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('2026-06-15 19:14:00', $import->exported_at->format('Y-m-d H:i:s'));
         $this->assertSame('2026-05-15', $import->period_start->format('Y-m-d'));
         $this->assertSame('2026-06-15', $import->period_end->format('Y-m-d'));
-        $this->assertSame(2, $import->row_count);
+        $this->assertSame(3, $import->row_count);
 
         $first = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->first();
         $this->assertInstanceOf(BillStatementRow::class, $first);
@@ -450,6 +451,28 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('招商银行', $first->source_name);
         $this->assertSame('霸王茶姬', $first->destination_name);
         $this->assertSame('微信支付交易单号：420000000000000001', $first->notes);
+
+        $transfer = BillStatementRow::query()
+            ->where('bill_statement_import_id', $import->id)
+            ->where('platform_category', '转账红包')
+            ->first()
+        ;
+        $this->assertInstanceOf(BillStatementRow::class, $transfer);
+        $this->assertSame('转账红包', $transfer->platform_category);
+        $this->assertSame('李四', $transfer->counterparty);
+        $this->assertSame('转账给李四', $transfer->firefly_description);
+        $this->assertSame('微信零钱', $transfer->source_name);
+        $this->assertSame('李四', $transfer->destination_name);
+        $this->assertSame('转账', $transfer->category_name);
+
+        $refund = BillStatementRow::query()
+            ->where('bill_statement_import_id', $import->id)
+            ->where('platform_category', '转账-退款')
+            ->first()
+        ;
+        $this->assertInstanceOf(BillStatementRow::class, $refund);
+        $this->assertSame('转账退款', $refund->firefly_description);
+        $this->assertSame('退款', $refund->category_name);
     }
 
     public function testWechatReadyTaskWithSecretExtractsXlsxStatementIntoEditableImportRows(): void
@@ -490,7 +513,7 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('2026-06-15 19:14:00', $import->exported_at->format('Y-m-d H:i:s'));
         $this->assertSame('2026-05-15', $import->period_start->format('Y-m-d'));
         $this->assertSame('2026-06-15', $import->period_end->format('Y-m-d'));
-        $this->assertSame(2, $import->row_count);
+        $this->assertSame(3, $import->row_count);
 
         $first = BillStatementRow::query()->where('bill_statement_import_id', $import->id)->orderBy('row_number')->first();
         $this->assertInstanceOf(BillStatementRow::class, $first);
@@ -503,6 +526,28 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('withdrawal', $first->firefly_type);
         $this->assertSame('招商银行', $first->source_name);
         $this->assertSame('霸王茶姬', $first->destination_name);
+
+        $transfer = BillStatementRow::query()
+            ->where('bill_statement_import_id', $import->id)
+            ->where('platform_category', '转账红包')
+            ->first()
+        ;
+        $this->assertInstanceOf(BillStatementRow::class, $transfer);
+        $this->assertSame('转账红包', $transfer->platform_category);
+        $this->assertSame('李四', $transfer->counterparty);
+        $this->assertSame('转账给李四', $transfer->firefly_description);
+        $this->assertSame('微信零钱', $transfer->source_name);
+        $this->assertSame('李四', $transfer->destination_name);
+        $this->assertSame('转账', $transfer->category_name);
+
+        $refund = BillStatementRow::query()
+            ->where('bill_statement_import_id', $import->id)
+            ->where('platform_category', '转账-退款')
+            ->first()
+        ;
+        $this->assertInstanceOf(BillStatementRow::class, $refund);
+        $this->assertSame('转账退款', $refund->firefly_description);
+        $this->assertSame('退款', $refund->category_name);
     }
 
     public function testAlipayOverlappingStatementsReuseExistingRowsAndPreserveUserEdits(): void
@@ -596,7 +641,7 @@ final class BillTaskProcessorTest extends TestCase
         $this->createEncryptedStatementArtifact($firstTask, 'wechat-first.zip', $this->wechatStatementCsv(), 'zip-secret', 'wechat-pay-records.csv');
 
         $this->assertTrue(app(BillTaskProcessor::class)->process($firstTask, 'zip-secret'));
-        $this->assertSame(2, BillStatementRow::query()->count());
+        $this->assertSame(3, BillStatementRow::query()->count());
 
         $secondTask = $this->createTask('ready', 'wechat', 'wechat-pay-statement');
         $secondZip  = $this->createEncryptedStatementArtifact($secondTask, 'wechat-second.zip', $this->wechatStatementCsv(), 'zip-secret', 'wechat-pay-records.csv');
@@ -608,7 +653,7 @@ final class BillTaskProcessorTest extends TestCase
             ->firstOrFail()
         ;
 
-        $this->assertSame(2, BillStatementRow::query()->count());
+        $this->assertSame(3, BillStatementRow::query()->count());
         $this->assertSame(0, BillStatementRow::query()->where('bill_statement_import_id', $secondImport->id)->count());
 
         $firstRow = BillStatementRow::query()->where('platform_order_no', '420000000000000001')->firstOrFail();
@@ -616,6 +661,97 @@ final class BillTaskProcessorTest extends TestCase
         $this->assertSame('duplicate', $firstRow->duplicate_state);
         $this->assertContains($firstRow->id, $secondImport->metadata['identity']['duplicate_row_ids']);
         $this->assertContains($secondImport->id, $firstRow->metadata['identity']['seen_import_ids']);
+    }
+
+    public function testWechatPlaceholderMerchantOrderDoesNotHideDistinctPlatformOrders(): void
+    {
+        $firstTask = $this->createTask('parsed', 'wechat', 'wechat-pay-statement');
+        $firstImport = $this->createImport($firstTask, 'wechat-first.xlsx');
+        app(BillStatementRowIdentityService::class)->upsertRow($firstImport, $this->wechatIdentityRow([
+            'row_number'        => 1,
+            'occurred_at'       => Carbon::parse('2026-06-13 15:23:53', 'Asia/Shanghai'),
+            'platform_category' => '零钱提现',
+            'counterparty'      => '招商银行(8705)',
+            'description'       => '/',
+            'direction'         => '/',
+            'amount'            => '1486',
+            'payment_method'    => '招商银行储蓄卡(8705)',
+            'platform_order_no' => '207260613109970131825008428256',
+            'merchant_order_no' => '/',
+        ]));
+
+        $secondTask = $this->createTask('parsed', 'wechat', 'wechat-pay-statement');
+        $secondImport = $this->createImport($secondTask, 'wechat-second.xlsx');
+        app(BillStatementRowIdentityService::class)->upsertRow($secondImport, $this->wechatIdentityRow([
+            'row_number'          => 18,
+            'occurred_at'         => Carbon::parse('2026-06-18 17:54:49', 'Asia/Shanghai'),
+            'platform_category'   => '转账',
+            'counterparty'        => 'A A A A A老婆温温',
+            'description'         => '转账备注:微信转账',
+            'direction'           => '收入',
+            'amount'              => '1314',
+            'payment_method'      => '/',
+            'transaction_status'  => '已存入零钱',
+            'platform_order_no'   => '1000050001202606180629033166998',
+            'merchant_order_no'   => '/',
+            'firefly_type'        => 'deposit',
+            'firefly_description' => '收到A A A A A老婆温温转账',
+            'source_name'         => 'A A A A A老婆温温',
+            'destination_name'    => '微信零钱',
+            'category_name'       => '转账',
+        ]));
+
+        $this->assertSame(2, BillStatementRow::query()->count());
+        $missing = BillStatementRow::query()->where('platform_order_no', '1000050001202606180629033166998')->first();
+        $this->assertInstanceOf(BillStatementRow::class, $missing);
+        $this->assertSame('unique', $missing->duplicate_state);
+        $this->assertSame('1314', (string) $missing->amount);
+        $this->assertSame('微信零钱', $missing->destination_name);
+    }
+
+    public function testWechatExistingImportCanBeReprocessedToFillMissingRows(): void
+    {
+        Storage::fake('local');
+        $task = $this->createTask('parsed', 'wechat', 'wechat-pay-statement');
+        $path = 'bill-inbox/1/derived/wechat-existing.xlsx';
+        Storage::disk('local')->put($path, $this->wechatStatementCsv());
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'csv',
+            'filename'     => 'wechat-existing.csv',
+            'path'         => $path,
+            'encrypted'    => false,
+        ]);
+        $import = BillStatementImport::query()->create([
+            'user_id'           => $this->user->id,
+            'bill_task_id'      => $task->id,
+            'bill_artifact_id'  => $artifact->id,
+            'source'            => 'wechat',
+            'profile_id'        => 'wechat-pay-statement',
+            'original_filename' => 'wechat-existing.csv',
+            'archived_filename' => 'wechat-existing.csv',
+            'row_count'         => 3,
+            'status'            => 'parsed',
+            'metadata'          => [],
+        ]);
+        app(BillStatementRowIdentityService::class)->upsertRow($import, $this->wechatIdentityRow([
+            'row_number'        => 1,
+            'occurred_at'       => Carbon::parse('2026-06-15 18:00:00', 'Asia/Shanghai'),
+            'platform_category' => '餐饮美食',
+            'counterparty'      => '霸王茶姬',
+            'description'       => '轻乳茶',
+            'direction'         => '支出',
+            'amount'            => '16.00',
+            'payment_method'    => '招商银行储蓄卡(8705)',
+            'platform_order_no' => '420000000000000001',
+            'merchant_order_no' => 'merchant-1',
+        ]));
+
+        app(\FireflyIII\Services\BillIngestion\WechatPayStatementImportService::class)->importArtifact($artifact, $this->wechatStatementCsv());
+
+        $this->assertSame(3, BillStatementRow::query()->count());
+        $this->assertNotNull(BillStatementRow::query()->where('platform_order_no', '420000000000000002')->first());
+        $this->assertNotNull(BillStatementRow::query()->where('platform_order_no', '420000000000000003')->first());
     }
 
     public function testCmbStatementsUseFingerprintForDuplicatesAndMarkConflicts(): void
@@ -756,6 +892,66 @@ final class BillTaskProcessorTest extends TestCase
         ]);
     }
 
+    private function createImport(BillTask $task, string $filename): BillStatementImport
+    {
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $task->id,
+            'kind'         => 'xlsx',
+            'filename'     => $filename,
+            'path'         => sprintf('bill-inbox/%d/derived/%s', $task->id, $filename),
+            'encrypted'    => false,
+        ]);
+
+        return BillStatementImport::query()->create([
+            'user_id'           => $this->user->id,
+            'bill_task_id'      => $task->id,
+            'bill_artifact_id'  => $artifact->id,
+            'source'            => 'wechat',
+            'profile_id'        => 'wechat-pay-statement',
+            'original_filename' => $filename,
+            'archived_filename' => $filename,
+            'row_count'         => 1,
+            'status'            => 'parsed',
+            'metadata'          => [],
+        ]);
+    }
+
+    /**
+     * @param array<string,mixed> $overrides
+     *
+     * @return array<string,mixed>
+     */
+    private function wechatIdentityRow(array $overrides): array
+    {
+        return array_replace([
+            'row_number'               => 1,
+            'status'                   => 'pending',
+            'occurred_at'              => Carbon::parse('2026-06-18 17:54:49', 'Asia/Shanghai'),
+            'platform_category'        => '转账',
+            'counterparty'             => '测试',
+            'counterparty_account'     => null,
+            'description'              => '转账备注:微信转账',
+            'direction'                => '收入',
+            'amount'                   => '1',
+            'payment_method'           => '/',
+            'transaction_status'       => '已存入零钱',
+            'platform_order_no'        => 'platform-order',
+            'merchant_order_no'        => '/',
+            'remark'                   => '/',
+            'raw_data'                 => [],
+            'editable_data'            => [],
+            'firefly_type'             => 'deposit',
+            'firefly_date'             => Carbon::parse('2026-06-18 17:54:49', 'Asia/Shanghai'),
+            'firefly_amount'           => '1',
+            'firefly_description'      => '收到测试转账',
+            'source_name'              => '测试',
+            'destination_name'         => '微信零钱',
+            'category_name'            => '转账',
+            'notes'                    => null,
+            'tags'                     => ['微信支付'],
+        ], $overrides);
+    }
+
     private function alipayStatementCsv(): string
     {
         return mb_convert_encoding(<<<'CSV'
@@ -787,11 +983,12 @@ CSV, 'GB18030', 'UTF-8');
 起始时间：[2026-05-15 00:00:00]    终止时间：[2026-06-15 23:59:59]
 导出类型：[全部]
 导出时间：[2026-06-15 19:14:00]
-共2笔记录
+共3笔记录
 
 交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注
 2026-06-15 18:00:00,餐饮美食,霸王茶姬,轻乳茶,支出,16.00,招商银行储蓄卡(8705),支付成功,420000000000000001,merchant-1,
-2026-06-15 08:30:00,转账红包,李四,微信转账,收入,50.00,零钱,已收钱,420000000000000002,merchant-2,
+2026-06-15 08:30:00,转账红包,李四,微信转账,支出,50.00,零钱,支付成功,420000000000000002,merchant-2,
+2026-06-15 08:35:00,转账-退款,/,转账退款,收入,50.00,零钱,退款成功,420000000000000003,merchant-3,
 CSV, 'UTF-8', 'UTF-8');
     }
 
@@ -835,7 +1032,7 @@ TEXT;
             '起始时间：[2026-05-15 00:00:00] 终止时间：[2026-06-15 23:59:59]',
             '导出类型：[全部]',
             '导出时间：[2026-06-15 19:14:00]',
-            '共2笔记录',
+            '共3笔记录',
             '收入：1笔 50.00元',
             '支出：1笔 16.80元',
             '中性交易：0笔 0.00元',
@@ -865,11 +1062,16 @@ TEXT;
             '转账红包',
             '李四',
             '微信转账',
-            '收入',
+            '支出',
             '零钱',
-            '已收钱',
+            '支付成功',
             '420000000000000002',
             'merchant-2',
+            '转账-退款',
+            '转账退款',
+            '退款成功',
+            '420000000000000003',
+            'merchant-3',
         ];
 
         $sheetRows = [];
@@ -892,6 +1094,11 @@ TEXT;
             .'<c r="D16" t="s"><v>34</v></c><c r="E16" t="s"><v>35</v></c><c r="F16"><v>50</v></c>'
             .'<c r="G16" t="s"><v>36</v></c><c r="H16" t="s"><v>37</v></c><c r="I16" t="s"><v>38</v></c>'
             .'<c r="J16" t="s"><v>39</v></c><c r="K16" t="s"><v>31</v></c></row>';
+        $sheetRows[] = '<row r="17">'
+            .'<c r="A17"><v>46188.35763888889</v></c><c r="B17" t="s"><v>40</v></c><c r="C17" t="s"><v>31</v></c>'
+            .'<c r="D17" t="s"><v>41</v></c><c r="E17" t="s"><v>35</v></c><c r="F17"><v>50</v></c>'
+            .'<c r="G17" t="s"><v>36</v></c><c r="H17" t="s"><v>42</v></c><c r="I17" t="s"><v>43</v></c>'
+            .'<c r="J17" t="s"><v>44</v></c><c r="K17" t="s"><v>31</v></c></row>';
 
         $files = [
             '[Content_Types].xml'      => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>',
