@@ -72,6 +72,14 @@ Breadcrumbs::for(
 );
 
 Breadcrumbs::for(
+    'daily-reconciliation.index',
+    static function (Generator $breadcrumbs): void {
+        $breadcrumbs->parent('home');
+        $breadcrumbs->push(trans('breadcrumbs.daily_reconciliation'), route('daily-reconciliation.index'));
+    }
+);
+
+Breadcrumbs::for(
     'index',
     static function (Generator $breadcrumbs): void {
         $breadcrumbs->push(trans('breadcrumbs.home'), route('index'));

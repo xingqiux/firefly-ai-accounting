@@ -60,6 +60,11 @@
                     <span>{{ 'transfers'|_ }}</span>
                 </a>
             </li>
+            <li class="{{ activeRoutePartial('daily-reconciliation') }}">
+                <a href="{{ route('daily-reconciliation.index') }}">
+                    <span>按天对账</span>
+                </a>
+            </li>
         </ul>
     </li>
 

@@ -1331,6 +1331,9 @@ Route::group(
     }
 );
 
+Route::get('daily-reconciliation', ['middleware' => 'user-full-auth', 'uses' => 'FireflyIII\Http\Controllers\DailyReconciliationController@index', 'as' => 'daily-reconciliation.index']);
+Route::post('daily-reconciliation/{tj}', ['middleware' => 'user-full-auth', 'uses' => 'FireflyIII\Http\Controllers\DailyReconciliationController@update', 'as' => 'daily-reconciliation.update']);
+
 // Transaction Mass Controller.
 Route::group(
     ['middleware' => 'user-full-auth', 'namespace' => 'FireflyIII\Http\Controllers\Transaction', 'prefix' => 'transactions/mass', 'as' => 'transactions.mass.'],

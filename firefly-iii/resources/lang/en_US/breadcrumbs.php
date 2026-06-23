@@ -27,6 +27,7 @@ return [
     'budgets'                => 'Budgets',
     'subscriptions'          => 'Subscriptions',
     'transactions'           => 'Transactions',
+    'daily_reconciliation'   => 'Daily reconciliation',
     'title_expenses'         => 'Expenses',
     'title_withdrawal'       => 'Expenses',
     'title_revenue'          => 'Revenue / income',

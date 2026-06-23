@@ -27,6 +27,7 @@ return [
     'budgets'                => '预算',
     'subscriptions'          => '订阅',
     'transactions'           => '交易',
+    'daily_reconciliation'   => '按天对账',
     'title_expenses'         => '支出',
     'title_withdrawal'       => '支出',
     'title_revenue'          => '收入',
