@@ -10,6 +10,7 @@ use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillStatementRowImportService;
+use FireflyIII\Services\BillIngestion\BillStatementRowSplitService;
 use FireflyIII\Services\BillIngestion\BillMailboxSyncService;
 use FireflyIII\Services\BillIngestion\BillSourceChannelRegistry;
 use FireflyIII\Services\BillIngestion\BillTaskActionService;
@@ -33,6 +34,7 @@ class IndexController extends Controller
         private readonly BillMailboxSyncService $mailboxSyncService,
         private readonly BillTaskProcessor $taskProcessor,
         private readonly BillStatementRowImportService $rowImportService,
+        private readonly BillStatementRowSplitService $rowSplitService,
         private readonly BillSourceChannelRegistry $channelRegistry,
     ) {
         parent::__construct();
@@ -318,6 +320,25 @@ class IndexController extends Controller
         $billStatementRow->save();
 
         session()->flash('success', '流水已保存。');
+
+        return redirect(route('bill-inbox.show', [$billStatementRow->bill_task_id]));
+    }
+
+    public function postSplitRow(Request $request, BillStatementRow $billStatementRow): RedirectResponse
+    {
+        $validated = $request->validate([
+            'splits'                    => ['required', 'array', 'min:2'],
+            'splits.*.payment_method'   => ['nullable', 'string', 'max:255'],
+            'splits.*.source_name'      => ['nullable', 'string', 'max:255'],
+            'splits.*.amount'           => ['required', 'numeric'],
+        ]);
+
+        try {
+            $children = $this->rowSplitService->split($billStatementRow, $validated['splits']);
+            session()->flash('success', sprintf('已拆分出 %d 条流水。', count($children)));
+        } catch (RuntimeException $e) {
+            session()->flash('error', $e->getMessage());
+        }
 
         return redirect(route('bill-inbox.show', [$billStatementRow->bill_task_id]));
     }
@@ -745,6 +766,8 @@ class IndexController extends Controller
             'ignored'      => '已忽略',
             'cleaned'      => '已归档',
             'pending'      => '待存入',
+            'needs_split'  => '待拆分',
+            'split'        => '已拆分',
         ];
     }
 

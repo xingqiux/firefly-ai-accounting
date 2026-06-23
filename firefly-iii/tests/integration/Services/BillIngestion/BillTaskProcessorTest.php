@@ -495,6 +495,24 @@ TEXT
         $this->assertSame(3, BillStatementRow::query()->where('bill_statement_import_id', $import->id)->count());
     }
 
+    public function testAlipayComboPaymentRowsRequireManualSplit(): void
+    {
+        Storage::fake('local');
+        $task = $this->createTask('ready', 'alipay', 'alipay-statement');
+        $this->createEncryptedStatementArtifact($task, 'alipay-combo.zip', $this->alipayComboPaymentStatementCsv(), 'zip-secret');
+
+        $this->assertTrue(app(BillTaskProcessor::class)->process($task, 'zip-secret'));
+
+        $row = BillStatementRow::query()->firstOrFail();
+        $this->assertSame('needs_split', $row->status);
+        $this->assertSame(0, bccomp('23.80', (string) $row->amount, 2));
+        $this->assertNull($row->firefly_type);
+        $this->assertNull($row->firefly_amount);
+        $this->assertSame('招商银行储蓄卡(8705)&花呗', $row->payment_method);
+        $this->assertSame(['招商银行储蓄卡(8705)', '花呗'], $row->metadata['payment_split']['methods']);
+        $this->assertSame('支付宝组合支付需要先拆分实际扣款账户和金额', $row->metadata['payment_split']['reason']);
+    }
+
     public function testWechatReadyTaskWithSecretExtractsStatementIntoEditableImportRows(): void
     {
         Storage::fake('local');
@@ -1069,6 +1087,24 @@ TEXT
 2026-06-15 17:20:33,充值缴费,中国联通,ah-***@chinaunicom.cn,为155****2328交费20.00元,支出,14.95,招商银行储蓄卡(8705)&支付宝随机立减,交易成功,2026061522001414871443694067,CP0232671781515214344949,
 2026-06-15 10:22:14,信用借还,花呗,/,花呗主动还款-2026年07月账单,不计收支,123.00,招商银行储蓄卡(8705),还款成功,2026061529020999870179346714,,
 2026-06-15 09:30:52,日用百货,安徽邻几（肥西亚坤大厦店）,209***@qq.com,11400肥西亚坤大厦店,支出,3.32,花呗&花呗青春特惠,交易成功,2026061523001414871431914548,11400A260615093044,
+CSV, 'GB18030', 'UTF-8');
+    }
+
+    private function alipayComboPaymentStatementCsv(): string
+    {
+        return mb_convert_encoding(<<<'CSV'
+------------------------------------------------------------------------------------
+导出信息：
+姓名：李昶乐
+支付宝账户：15556952328
+起始时间：[2026-05-22 00:00:00]    终止时间：[2026-06-22 23:59:59]
+导出交易类型：[全部]
+导出时间：[2026-06-22 12:07:00]
+共1笔记录
+
+------------------------支付宝支付科技有限公司  电子客户回单------------------------
+交易时间,交易分类,交易对方,对方账号,商品说明,收/支,金额,收/付款方式,交易状态,交易订单号,商家订单号,备注
+2026-06-18 11:21:17,餐饮美食,淘宝闪购,e50***@alibaba-inc.com,Super Model超模厨房(上海外滩店)外卖订单,支出,23.80,招商银行储蓄卡(8705)&花呗,交易成功,2026061823001114871453041742,13110600726061845616321068857,
 CSV, 'GB18030', 'UTF-8');
     }
 

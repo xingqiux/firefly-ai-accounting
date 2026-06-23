@@ -29,6 +29,10 @@ interface BillStatementRowUpdateOptions {
   set?: string[];
 }
 
+interface BillStatementRowSplitOptions {
+  part?: string[];
+}
+
 interface BillStatementImportCommandOptions {
   all?: boolean;
   rows?: string;
@@ -178,6 +182,18 @@ export function registerBillInboxCommands(program: Command): void {
       const context = await createCommandContext(this);
       const service = new BillTaskService(context.client);
       const result = await service.updateRow(rowId, parseSetValues(options.set ?? []));
+      console.log(renderOutput(result, { format: context.format }));
+    });
+
+  row
+    .command('split')
+    .description('Split a combo-payment statement row into importable rows.')
+    .argument('<rowId>', 'Statement row identifier.')
+    .requiredOption('--part <payment=amount>', 'Split part. Use payment=amount or payment:source=amount. Repeatable.', collect, [])
+    .action(async function (rowId: string, options: BillStatementRowSplitOptions) {
+      const context = await createCommandContext(this);
+      const service = new BillTaskService(context.client);
+      const result = await service.splitRow(rowId, parseSplitParts(options.part ?? []));
       console.log(renderOutput(result, { format: context.format }));
     });
 
@@ -369,6 +385,31 @@ function parseSetValues(values: string[]): Record<string, string> {
     parsed[key] = fieldValue;
   }
   return parsed;
+}
+
+function parseSplitParts(values: string[]): Array<{ payment_method: string; source_name?: string; amount: string }> {
+  if (values.length < 2) {
+    throw new FireflyInputError('Pass at least two --part values.');
+  }
+
+  return values.map((value) => {
+    const separator = value.lastIndexOf('=');
+    if (separator <= 0) {
+      throw new FireflyInputError(`Invalid --part value "${value}". Use payment=amount.`);
+    }
+    const left = value.slice(0, separator).trim();
+    const amount = value.slice(separator + 1).trim();
+    const [paymentMethod, sourceName] = left.split(':', 2).map((item) => item.trim());
+    if (!paymentMethod || !amount) {
+      throw new FireflyInputError(`Invalid --part value "${value}". Use payment=amount.`);
+    }
+
+    return {
+      payment_method: paymentMethod,
+      source_name: sourceName || undefined,
+      amount,
+    };
+  });
 }
 
 function parseIdList(value: string, option: string): number[] {

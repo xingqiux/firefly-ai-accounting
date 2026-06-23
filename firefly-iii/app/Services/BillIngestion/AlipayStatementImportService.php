@@ -117,6 +117,10 @@ class AlipayStatementImportService
         $platformOrder  = $this->clean($row['交易订单号'] ?? '');
         $merchantOrder  = $this->clean($row['商家订单号'] ?? '');
         $fireflyType    = $this->fireflyType($direction);
+        $paymentSplit   = $this->paymentSplit($paymentMethod);
+        if (null !== $paymentSplit) {
+            $fireflyType = null;
+        }
         $sourceName     = null;
         $destinationName = null;
         if ('withdrawal' === $fireflyType) {
@@ -148,7 +152,7 @@ class AlipayStatementImportService
             'bill_task_id'               => $import->bill_task_id,
             'bill_statement_import_id'   => $import->id,
             'row_number'                 => $rowNumber,
-            'status'                     => 'pending',
+            'status'                     => null === $paymentSplit ? 'pending' : 'needs_split',
             'occurred_at'                => $occurredAt,
             'platform_category'          => $editable['交易分类'],
             'counterparty'               => $counterparty,
@@ -165,13 +169,14 @@ class AlipayStatementImportService
             'editable_data'              => $editable,
             'firefly_type'               => $fireflyType,
             'firefly_date'               => $occurredAt,
-            'firefly_amount'             => '' === $amount ? null : $amount,
+            'firefly_amount'             => null === $paymentSplit && '' !== $amount ? $amount : null,
             'firefly_description'        => '' === $description ? $counterparty : $description,
             'source_name'                => $sourceName,
             'destination_name'           => $destinationName,
             'category_name'              => $editable['交易分类'],
             'notes'                      => $this->notes($platformOrder, $merchantOrder),
             'tags'                       => ['支付宝'],
+            'metadata'                   => null === $paymentSplit ? [] : ['payment_split' => $paymentSplit],
         ];
     }
 
@@ -369,6 +374,37 @@ class AlipayStatementImportService
         }
 
         return '' === $primary ? '支付宝' : $primary;
+    }
+
+    /**
+     * @return null|array{methods:array<int,string>,reason:string}
+     */
+    private function paymentSplit(string $paymentMethod): ?array
+    {
+        $methods = array_values(array_filter(
+            array_map(fn (string $method): string => $this->clean($method), explode('&', $paymentMethod)),
+            fn (string $method): bool => '' !== $method && !$this->isAlipayDiscountMethod($method)
+        ));
+
+        if (count($methods) < 2) {
+            return null;
+        }
+
+        return [
+            'methods' => $methods,
+            'reason'  => '支付宝组合支付需要先拆分实际扣款账户和金额',
+        ];
+    }
+
+    private function isAlipayDiscountMethod(string $method): bool
+    {
+        foreach (['优惠', '立减', '红包', '奖励金', '折扣', '抵扣', '特惠'] as $keyword) {
+            if (str_contains($method, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function clean(string $value): string

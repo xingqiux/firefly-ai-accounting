@@ -61,6 +61,13 @@ class BillStatementRowImportService
      */
     private function importRow(User $user, BillStatementRow $row, bool $confirm, bool $includePayload): array
     {
+        if (in_array($row->status, ['needs_split', 'split'], true)) {
+            return $this->reportForRow($row, [
+                'status' => 'skipped',
+                'error'  => '组合支付需要先拆分真实扣款账户和金额。',
+            ]);
+        }
+
         if ('imported' === $row->status && null !== $row->transaction_group_id) {
             return $this->reportForRow($row, [
                 'status'               => 'skipped',

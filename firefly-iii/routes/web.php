@@ -1400,6 +1400,7 @@ Route::group(
         Route::get('channel/{source}', ['uses' => 'IndexController@channel', 'as' => 'channel']);
         Route::get('artifacts/{billArtifact}/preview', ['uses' => 'IndexController@preview', 'as' => 'artifact.preview']);
         Route::get('artifacts/{billArtifact}/download', ['uses' => 'IndexController@download', 'as' => 'artifact.download']);
+        Route::post('rows/{billStatementRow}/split', ['uses' => 'IndexController@postSplitRow', 'as' => 'row.split']);
         Route::post('rows/{billStatementRow}', ['uses' => 'IndexController@postUpdateRow', 'as' => 'row.update']);
         Route::get('{billTask}', ['uses' => 'IndexController@show', 'as' => 'show']);
         Route::post('{billTask}/secret', ['uses' => 'IndexController@postSecret', 'as' => 'secret']);

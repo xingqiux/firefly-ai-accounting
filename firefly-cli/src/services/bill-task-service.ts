@@ -25,6 +25,12 @@ export interface BillStatementImportOptions {
   includePayload?: boolean;
 }
 
+export interface BillStatementRowSplit {
+  payment_method?: string;
+  source_name?: string;
+  amount: string;
+}
+
 export interface BillInboxSettingsUpdate {
   enabled?: boolean;
   provider?: string;
@@ -82,6 +88,10 @@ export class BillTaskService {
 
   updateRow(rowId: string, values: Record<string, string>): Promise<unknown> {
     return this.client.request('PATCH', rowPath(rowId), { json: values });
+  }
+
+  splitRow(rowId: string, splits: BillStatementRowSplit[]): Promise<unknown> {
+    return this.client.request('POST', `${rowPath(rowId)}/split`, { json: { splits } });
   }
 
   importRows(taskId: string, options: BillStatementImportOptions): Promise<unknown> {

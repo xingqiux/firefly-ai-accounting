@@ -445,6 +445,7 @@ Route::group(
     static function (): void {
         Route::get('{billStatementRow}', ['uses' => 'ActionController@showRow', 'as' => 'show']);
         Route::patch('{billStatementRow}', ['uses' => 'ActionController@updateRow', 'as' => 'update']);
+        Route::post('{billStatementRow}/split', ['uses' => 'ActionController@splitRow', 'as' => 'split']);
     }
 );
 

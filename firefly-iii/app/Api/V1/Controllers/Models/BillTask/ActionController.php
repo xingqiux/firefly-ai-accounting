@@ -8,6 +8,7 @@ use FireflyIII\Api\V1\Controllers\Controller;
 use FireflyIII\Models\BillStatementRow;
 use FireflyIII\Models\BillTask;
 use FireflyIII\Services\BillIngestion\BillStatementRowImportService;
+use FireflyIII\Services\BillIngestion\BillStatementRowSplitService;
 use FireflyIII\Services\BillIngestion\BillTaskActionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,7 @@ final class ActionController extends Controller
     public function __construct(
         private readonly BillTaskActionService $actionService,
         private readonly BillStatementRowImportService $rowImportService,
+        private readonly BillStatementRowSplitService $rowSplitService,
     ) {}
 
     public function ignore(BillTask $billTask): JsonResponse
@@ -137,6 +139,27 @@ final class ActionController extends Controller
     public function showRow(BillStatementRow $billStatementRow): JsonResponse
     {
         return response()->json(['data' => $this->statementRowResource($billStatementRow)]);
+    }
+
+    public function splitRow(Request $request, BillStatementRow $billStatementRow): JsonResponse
+    {
+        $validated = $request->validate([
+            'splits'                    => ['required', 'array', 'min:2'],
+            'splits.*.payment_method'   => ['nullable', 'string', 'max:255'],
+            'splits.*.source_name'      => ['nullable', 'string', 'max:255'],
+            'splits.*.amount'           => ['required', 'numeric'],
+        ]);
+
+        try {
+            $children = $this->rowSplitService->split($billStatementRow, $validated['splits']);
+        } catch (RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'parent' => $this->statementRowResource($billStatementRow->refresh()),
+            'data'   => array_map(fn (BillStatementRow $row): array => $this->statementRowResource($row->refresh()), $children),
+        ]);
     }
 
     public function secret(Request $request, BillTask $billTask): JsonResponse

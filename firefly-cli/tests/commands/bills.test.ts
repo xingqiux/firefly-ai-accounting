@@ -229,6 +229,37 @@ describe('bill inbox commands', () => {
     });
   });
 
+  test('splits a combo-payment statement row through the Firefly API', async () => {
+    const fetchMock = mockJsonFetch({
+      parent: { id: '9', type: 'bill-statement-rows', attributes: { status: 'split' } },
+      data: [],
+    });
+
+    await runCli([
+      'bill-inbox',
+      'row',
+      'split',
+      '9',
+      '--part',
+      '招商银行储蓄卡(8705):招商银行=9.72',
+      '--part',
+      '花呗=14.08',
+      '--format',
+      'json',
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/v1/bill-statement-rows/9/split',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(requestBody(fetchMock.mock.calls[0])).toEqual({
+      splits: [
+        { payment_method: '招商银行储蓄卡(8705)', source_name: '招商银行', amount: '9.72' },
+        { payment_method: '花呗', amount: '14.08' },
+      ],
+    });
+  });
+
   test('imports statement rows with dry run and confirmation flags', async () => {
     const fetchMock = mockJsonFetch({
       summary: { total: 3, imported: 3, skipped: 0, failed: 0 },

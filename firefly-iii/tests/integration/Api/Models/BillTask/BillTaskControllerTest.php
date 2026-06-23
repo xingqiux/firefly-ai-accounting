@@ -657,6 +657,77 @@ final class BillTaskControllerTest extends TestCase
         $this->assertNull($row->transaction_group_id);
     }
 
+    public function testSplitsComboPaymentStatementRow(): void
+    {
+        $row = $this->createStatementRow([
+            'status'              => 'needs_split',
+            'amount'              => '23.80',
+            'payment_method'      => '招商银行储蓄卡(8705)&花呗',
+            'firefly_type'        => null,
+            'firefly_amount'      => null,
+            'source_name'         => null,
+            'destination_name'    => '淘宝闪购',
+            'platform_order_no'   => '2026061823001114871453041742',
+            'merchant_order_no'   => '13110600726061845616321068857',
+            'metadata'            => [
+                'payment_split' => [
+                    'status'  => 'needs_split',
+                    'methods' => ['招商银行储蓄卡(8705)', '花呗'],
+                    'reason'  => '支付宝组合支付需要先拆分实际扣款账户和金额',
+                ],
+            ],
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-statement-rows.split', ['billStatementRow' => $row->id]), [
+            'splits' => [
+                ['payment_method' => '招商银行储蓄卡(8705)', 'amount' => '9.72'],
+                ['payment_method' => '花呗', 'amount' => '14.08'],
+            ],
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('parent.attributes.status', 'split');
+        $response->assertJsonPath('data.0.attributes.status', 'pending');
+        $response->assertJsonPath('data.0.attributes.source_name', '招商银行');
+        $response->assertJsonPath('data.0.attributes.firefly_amount', '9.72');
+        $response->assertJsonPath('data.1.attributes.source_name', '花呗');
+        $response->assertJsonPath('data.1.attributes.firefly_amount', '14.08');
+
+        $row->refresh();
+        $this->assertSame('split', $row->status);
+        $this->assertSame(2, BillStatementRow::query()->where('metadata->payment_split->parent_row_id', $row->id)->count());
+    }
+
+    public function testDoesNotSplitAlreadyImportedComboPaymentRow(): void
+    {
+        $row = $this->createStatementRow([
+            'status'               => 'needs_split',
+            'amount'               => '23.80',
+            'payment_method'       => '招商银行储蓄卡(8705)&花呗',
+            'firefly_type'         => null,
+            'firefly_amount'       => null,
+            'transaction_group_id' => 158,
+            'metadata'             => [
+                'payment_split' => [
+                    'status'  => 'needs_split',
+                    'methods' => ['招商银行储蓄卡(8705)', '花呗'],
+                ],
+            ],
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-statement-rows.split', ['billStatementRow' => $row->id]), [
+            'splits' => [
+                ['payment_method' => '招商银行储蓄卡(8705)', 'amount' => '9.72'],
+                ['payment_method' => '花呗', 'amount' => '14.08'],
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(1, BillStatementRow::query()->count());
+    }
+
     public function testReviewStatementRowsBuildsImportDecisionLists(): void
     {
         $this->createAccount('招商银行', 'Asset account');

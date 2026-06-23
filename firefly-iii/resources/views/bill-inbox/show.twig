@@ -91,7 +91,7 @@
                             <form method="POST" action="{{ route('bill-inbox.import', [task.id]) }}" style="display: inline-block;">
                                 <input type="hidden" name="_token" value="{{ csrf_token() }}">
                                 {% for row in statementRows %}
-                                    {% if row.status != 'imported' and row.firefly_type %}
+                                    {% if row.status == 'pending' and row.firefly_type %}
                                         <input type="hidden" name="row_ids[]" value="{{ row.id }}">
                                     {% endif %}
                                 {% endfor %}
@@ -169,7 +169,7 @@
                                 {% for row in statementRows %}
                                     <tr>
                                         <td>
-                                            {% if row.status != 'imported' and row.firefly_type %}
+                                            {% if row.status == 'pending' and row.firefly_type %}
                                                 <input form="bill-row-batch-import" type="checkbox" name="row_ids[]" value="{{ row.id }}">
                                             {% endif %}
                                         </td>
@@ -180,6 +180,9 @@
                                             <div>说明：{{ row.description|default('-') }}</div>
                                             <div>收/支：{{ row.direction|default('-') }} / 金额：{{ row.amount|default('-') }}</div>
                                             <div class="text-muted">付款方式：{{ row.payment_method|default('-') }}</div>
+                                            {% if row.metadata.payment_split is defined %}
+                                                <div class="text-warning">组合支付：{{ row.metadata.payment_split.reason|default('需要拆分实际扣款账户和金额') }}</div>
+                                            {% endif %}
                                         </td>
                                         <td>
                                             <div><strong>{{ row.firefly_description|default('-') }}</strong></div>
@@ -194,7 +197,7 @@
                                             <a class="btn btn-xs btn-default" data-toggle="collapse" href="#bill-row-{{ row.id }}">
                                                 <span class="fa fa-pencil fa-fw"></span> 编辑
                                             </a>
-                                            {% if row.status != 'imported' and row.firefly_type %}
+                                            {% if row.status == 'pending' and row.firefly_type %}
                                                 <form method="POST" action="{{ route('bill-inbox.import', [task.id]) }}" style="display: inline-block;">
                                                     <input type="hidden" name="_token" value="{{ csrf_token() }}">
                                                     <input type="hidden" name="row_ids[]" value="{{ row.id }}">
@@ -207,6 +210,33 @@
                                     </tr>
                                     <tr id="bill-row-{{ row.id }}" class="collapse">
                                         <td colspan="6">
+                                            {% if row.status == 'needs_split' %}
+                                                <form method="POST" action="{{ route('bill-inbox.row.split', [row.id]) }}" class="form-horizontal" style="margin-bottom: 20px;">
+                                                    <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                                                    <div class="row">
+                                                        {% set splitMethods = row.metadata.payment_split.methods|default([]) %}
+                                                        {% for index, method in splitMethods %}
+                                                            <div class="col-sm-4">
+                                                                <label>支付方式</label>
+                                                                <input class="form-control" name="splits[{{ index }}][payment_method]" value="{{ method }}">
+                                                            </div>
+                                                            <div class="col-sm-4">
+                                                                <label>来源账户</label>
+                                                                <input class="form-control" name="splits[{{ index }}][source_name]" value="{{ method }}">
+                                                            </div>
+                                                            <div class="col-sm-4">
+                                                                <label>实际金额</label>
+                                                                <input class="form-control" name="splits[{{ index }}][amount]" placeholder="0.00">
+                                                            </div>
+                                                        {% endfor %}
+                                                    </div>
+                                                    <div style="margin-top: 10px;">
+                                                        <button type="submit" class="btn btn-warning btn-sm">
+                                                            <span class="fa fa-code-fork fa-fw"></span> 保存拆分
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            {% endif %}
                                             <form method="POST" action="{{ route('bill-inbox.row.update', [row.id]) }}" class="form-horizontal">
                                                 <input type="hidden" name="_token" value="{{ csrf_token() }}">
                                                 <div class="row">
