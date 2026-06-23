@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FireflyIII\Http\Controllers\BillInbox;
 
+use Carbon\Carbon;
 use FireflyIII\Http\Controllers\Controller;
 use FireflyIII\Models\BillArtifact;
 use FireflyIII\Models\BillStatementRow;
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use ZipArchive;
 
 class IndexController extends Controller
 {
@@ -67,7 +69,12 @@ class IndexController extends Controller
         $query  = BillTask::query()
             ->where('user_id', auth()->id())
             ->where('source', $source)
-            ->with(['artifacts', 'mailMessage', 'currentSecretChallenge', 'statementRows'])
+            ->with([
+                'artifacts' => fn ($query) => $query->visibleToUser()->orderBy('id'),
+                'mailMessage',
+                'currentSecretChallenge',
+                'statementRows',
+            ])
             ->orderByDesc('received_at')
             ->orderByDesc('id')
         ;
@@ -103,7 +110,7 @@ class IndexController extends Controller
     public function show(Request $request, BillTask $billTask): Factory|View
     {
         $billTask->load([
-            'artifacts'        => fn ($query) => $query->orderBy('id'),
+            'artifacts'        => fn ($query) => $query->visibleToUser()->orderBy('id'),
             'currentSecretChallenge',
             'events'           => fn ($query) => $query->orderByDesc('id'),
             'mailMessage',
@@ -111,10 +118,13 @@ class IndexController extends Controller
         ]);
         $billTask->artifacts->each(function (BillArtifact $artifact) use ($billTask): void {
             $artifact->setAttribute('display_name', $this->artifactDisplayName($billTask, $artifact));
+            $artifact->setAttribute('can_preview', $this->canPreviewArtifact($artifact));
         });
         $rowStatus = (string) $request->query('row_status', '');
-        $rowFrom   = (string) $request->query('row_from', '');
-        $rowTo     = (string) $request->query('row_to', '');
+        $rowTime   = (string) $request->query('row_time', 'all');
+        $rowDate   = (string) $request->query('row_date', today(config('app.timezone'))->format('Y-m-d'));
+        $rowFrom   = 'day' === $rowTime ? $rowDate : (string) $request->query('row_from', '');
+        $rowTo     = 'day' === $rowTime ? $rowDate : (string) $request->query('row_to', '');
         $rows      = $billTask->statementRows()
             ->orderByDesc('occurred_at')
             ->orderBy('row_number')
@@ -135,9 +145,13 @@ class IndexController extends Controller
             'task'         => $billTask,
             'statementRows'=> $rows->get(),
             'rowFilters'   => [
-                'status' => $rowStatus,
-                'from'   => $rowFrom,
-                'to'     => $rowTo,
+                'status'   => $rowStatus,
+                'time'     => $rowTime,
+                'date'     => $rowDate,
+                'prevDate' => Carbon::parse($rowDate, config('app.timezone'))->subDay()->format('Y-m-d'),
+                'nextDate' => Carbon::parse($rowDate, config('app.timezone'))->addDay()->format('Y-m-d'),
+                'from'     => $rowFrom,
+                'to'       => $rowTo,
             ],
             'subTitle'     => sprintf('任务 #%d', $billTask->id),
             'statusLabels' => $this->statusLabels(),
@@ -320,11 +334,45 @@ class IndexController extends Controller
 
     public function download(BillArtifact $billArtifact): StreamedResponse
     {
+        if ($billArtifact->isInternalProcessingArtifact()) {
+            throw new NotFoundHttpException();
+        }
+
         if (null === $billArtifact->path || '' === $billArtifact->path || !Storage::disk('local')->exists($billArtifact->path)) {
             throw new NotFoundHttpException();
         }
 
-        return Storage::disk('local')->download($billArtifact->path, $billArtifact->filename ?? basename($billArtifact->path));
+        return response()->streamDownload(
+            static function () use ($billArtifact): void {
+                echo Storage::disk('local')->get((string) $billArtifact->path);
+            },
+            $billArtifact->filename ?? basename((string) $billArtifact->path)
+        );
+    }
+
+    public function preview(BillArtifact $billArtifact): Factory|View
+    {
+        if (!$this->canPreviewArtifact($billArtifact)) {
+            throw new NotFoundHttpException();
+        }
+
+        $previewArtifact = $this->previewArtifact($billArtifact);
+        $content         = null;
+        $tableRows       = [];
+        if (in_array($previewArtifact->kind, ['csv', 'txt', 'text'], true)) {
+            $content = $this->readTextPreview($previewArtifact);
+        }
+        if ('xlsx' === $previewArtifact->kind) {
+            $tableRows = $this->readXlsxPreviewRows($previewArtifact);
+        }
+
+        return view('bill-inbox.preview', [
+            'artifact'        => $billArtifact,
+            'previewArtifact' => $previewArtifact,
+            'content'         => $content,
+            'tableRows'       => $tableRows,
+            'task'            => $billArtifact->billTask,
+        ]);
     }
 
     public function postSettings(Request $request): RedirectResponse
@@ -486,6 +534,193 @@ class IndexController extends Controller
         }
 
         return (string) ($artifact->filename ?? $artifact->path ?? '-');
+    }
+
+    private function canPreviewArtifact(BillArtifact $artifact): bool
+    {
+        return $this->isDirectPreviewArtifact($artifact)
+            || $this->extractedTextPreviewArtifact($artifact) instanceof BillArtifact
+        ;
+    }
+
+    private function isDirectPreviewArtifact(BillArtifact $artifact): bool
+    {
+        return !$artifact->isInternalProcessingArtifact()
+            && false === $artifact->encrypted
+            && in_array($artifact->kind, ['csv', 'xlsx', 'txt', 'text', 'pdf'], true)
+            && null !== $artifact->path
+            && '' !== $artifact->path
+            && Storage::disk('local')->exists($artifact->path)
+        ;
+    }
+
+    private function previewArtifact(BillArtifact $artifact): BillArtifact
+    {
+        if ($this->isDirectPreviewArtifact($artifact)) {
+            return $artifact;
+        }
+
+        $previewArtifact = $this->extractedTextPreviewArtifact($artifact);
+        if ($previewArtifact instanceof BillArtifact) {
+            return $previewArtifact;
+        }
+
+        throw new NotFoundHttpException();
+    }
+
+    private function extractedTextPreviewArtifact(BillArtifact $artifact): ?BillArtifact
+    {
+        if ('pdf' !== $artifact->kind) {
+            return null;
+        }
+
+        $previewArtifact = $artifact->children()
+            ->whereIn('kind', ['txt', 'text'])
+            ->where('encrypted', false)
+            ->where('metadata->source', 'boc_pdf_text_extract')
+            ->orderByDesc('id')
+            ->first()
+        ;
+        if (!$previewArtifact instanceof BillArtifact) {
+            return null;
+        }
+        if (null === $previewArtifact->path || '' === $previewArtifact->path || !Storage::disk('local')->exists($previewArtifact->path)) {
+            return null;
+        }
+
+        return $previewArtifact;
+    }
+
+    private function readTextPreview(BillArtifact $artifact): string
+    {
+        return mb_convert_encoding(substr(Storage::disk('local')->get((string) $artifact->path), 0, 200000), 'UTF-8', 'UTF-8,GB18030,GBK,BIG5');
+    }
+
+    /**
+     * @return array<int,array<int,string>>
+     */
+    private function readXlsxPreviewRows(BillArtifact $artifact): array
+    {
+        $zip = new ZipArchive();
+        if (true !== $zip->open(Storage::disk('local')->path((string) $artifact->path))) {
+            return [];
+        }
+
+        try {
+            $sharedStrings = $this->readXlsxSharedStrings($zip);
+            $worksheetXml  = $this->readFirstXlsxWorksheet($zip);
+            if (null === $worksheetXml) {
+                return [];
+            }
+
+            $worksheet = simplexml_load_string($worksheetXml);
+            if (false === $worksheet || !isset($worksheet->sheetData)) {
+                return [];
+            }
+
+            $rows = [];
+            foreach ($worksheet->sheetData->row as $row) {
+                $cells = [];
+                foreach ($row->c as $cell) {
+                    $cells[$this->xlsxColumnIndex((string) $cell['r'])] = $this->xlsxCellValue($cell, $sharedStrings);
+                }
+                ksort($cells);
+                if ([] !== array_filter($cells, static fn (string $value): bool => '' !== trim($value))) {
+                    $rows[] = array_values($cells);
+                }
+                if (count($rows) >= 300) {
+                    break;
+                }
+            }
+
+            return $rows;
+        } finally {
+            $zip->close();
+        }
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function readXlsxSharedStrings(ZipArchive $zip): array
+    {
+        $xml = $zip->getFromName('xl/sharedStrings.xml');
+        if (false === $xml) {
+            return [];
+        }
+
+        $strings = simplexml_load_string($xml);
+        if (false === $strings) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($strings->si as $item) {
+            $result[] = $this->xlsxTextNodeValue($item);
+        }
+
+        return $result;
+    }
+
+    private function readFirstXlsxWorksheet(ZipArchive $zip): ?string
+    {
+        $sheet = $zip->getFromName('xl/worksheets/sheet1.xml');
+        if (false !== $sheet) {
+            return $sheet;
+        }
+
+        for ($index = 0; $index < $zip->numFiles; ++$index) {
+            $stat = $zip->statIndex($index);
+            $name = false === $stat ? '' : (string) ($stat['name'] ?? '');
+            if (str_starts_with($name, 'xl/worksheets/sheet') && str_ends_with($name, '.xml')) {
+                $sheet = $zip->getFromIndex($index);
+
+                return false === $sheet ? null : $sheet;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<int,string> $sharedStrings
+     */
+    private function xlsxCellValue(\SimpleXMLElement $cell, array $sharedStrings): string
+    {
+        $type  = (string) $cell['t'];
+        $value = (string) ($cell->v ?? '');
+        if ('s' === $type) {
+            return $sharedStrings[(int) $value] ?? $value;
+        }
+        if ('inlineStr' === $type && isset($cell->is)) {
+            return $this->xlsxTextNodeValue($cell->is);
+        }
+
+        return $value;
+    }
+
+    private function xlsxTextNodeValue(\SimpleXMLElement $node): string
+    {
+        $text = isset($node->t) ? (string) $node->t : '';
+        foreach ($node->r as $run) {
+            $text .= (string) ($run->t ?? '');
+        }
+
+        return $text;
+    }
+
+    private function xlsxColumnIndex(string $reference): int
+    {
+        if (1 !== preg_match('/^([A-Z]+)/i', $reference, $matches)) {
+            return 0;
+        }
+
+        $index = 0;
+        foreach (str_split(strtoupper($matches[1])) as $letter) {
+            $index = $index * 26 + ord($letter) - 64;
+        }
+
+        return max(0, $index - 1);
     }
 
     private function secretSubmittedMessage(BillTask $billTask): string

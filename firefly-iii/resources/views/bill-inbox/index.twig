@@ -11,6 +11,12 @@
                 <div class="box-header with-border">
                     <h3 class="box-title">账单收件箱</h3>
                     <div class="box-tools pull-right">
+                        <form method="POST" action="{{ route('bill-inbox.sync') }}" style="display: inline-block;">
+                            <input type="hidden" name="_token" value="{{ csrf_token() }}">
+                            <button class="btn btn-box-tool" type="submit">
+                                <span class="fa fa-refresh fa-fw"></span> 同步邮箱
+                            </button>
+                        </form>
                         <a class="btn btn-box-tool" href="{{ route('bill-inbox.settings') }}">
                             <span class="fa fa-cog fa-fw"></span> 邮箱配置
                         </a>

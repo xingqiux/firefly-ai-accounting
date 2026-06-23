@@ -117,13 +117,30 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="bill-row-from">开始</label>
-                            <input id="bill-row-from" class="form-control input-sm" name="row_from" value="{{ rowFilters.from }}" placeholder="YYYY-MM-DD">
+                            <label for="bill-row-time">时间</label>
+                            <select id="bill-row-time" class="form-control input-sm" name="row_time">
+                                <option value="all" {% if rowFilters.time == 'all' %}selected{% endif %}>全部</option>
+                                <option value="day" {% if rowFilters.time == 'day' %}selected{% endif %}>每日</option>
+                                <option value="custom" {% if rowFilters.time == 'custom' %}selected{% endif %}>自定义</option>
+                            </select>
                         </div>
+                        {% if rowFilters.time == 'day' %}
+                            <a class="btn btn-default btn-sm" href="{{ route('bill-inbox.show', {billTask: task.id, row_status: rowFilters.status, row_time: 'day', row_date: rowFilters.prevDate}) }}">上一天</a>
+                        {% endif %}
                         <div class="form-group">
-                            <label for="bill-row-to">结束</label>
-                            <input id="bill-row-to" class="form-control input-sm" name="row_to" value="{{ rowFilters.to }}" placeholder="YYYY-MM-DD">
+                            <input id="bill-row-date" class="form-control input-sm" type="date" name="row_date" value="{{ rowFilters.date }}">
                         </div>
+                        {% if rowFilters.time == 'day' %}
+                            <a class="btn btn-default btn-sm" href="{{ route('bill-inbox.show', {billTask: task.id, row_status: rowFilters.status, row_time: 'day', row_date: rowFilters.nextDate}) }}">下一天</a>
+                        {% endif %}
+                        {% if rowFilters.time == 'custom' %}
+                            <div class="form-group">
+                                <input class="form-control input-sm" type="date" name="row_from" value="{{ rowFilters.from }}">
+                            </div>
+                            <div class="form-group">
+                                <input class="form-control input-sm" type="date" name="row_to" value="{{ rowFilters.to }}">
+                            </div>
+                        {% endif %}
                         <button type="submit" class="btn btn-default btn-sm">
                             <span class="fa fa-filter fa-fw"></span> 筛选
                         </button>
@@ -256,7 +273,7 @@
                             <tr>
                                 <th>类型</th>
                                 <th>文件</th>
-                                <th style="width: 90px;">操作</th>
+                                <th style="width: 150px;">操作</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -265,6 +282,11 @@
                                     <td>{{ artifact.kind }}</td>
                                     <td>{{ artifact.display_name|default(artifact.filename|default(artifact.path|default('-'))) }}</td>
                                     <td>
+                                        {% if artifact.can_preview %}
+                                            <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.artifact.preview', [artifact.id]) }}">
+                                                <span class="fa fa-eye fa-fw"></span> 预览
+                                            </a>
+                                        {% endif %}
                                         <a class="btn btn-xs btn-default" href="{{ route('bill-inbox.artifact.download', [artifact.id]) }}">
                                             <span class="fa fa-download fa-fw"></span> 下载
                                         </a>

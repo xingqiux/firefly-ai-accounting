@@ -1398,6 +1398,7 @@ Route::group(
         Route::get('settings', ['uses' => 'IndexController@settings', 'as' => 'settings']);
         Route::post('settings', ['uses' => 'IndexController@postSettings', 'as' => 'settings.post']);
         Route::get('channel/{source}', ['uses' => 'IndexController@channel', 'as' => 'channel']);
+        Route::get('artifacts/{billArtifact}/preview', ['uses' => 'IndexController@preview', 'as' => 'artifact.preview']);
         Route::get('artifacts/{billArtifact}/download', ['uses' => 'IndexController@download', 'as' => 'artifact.download']);
         Route::post('rows/{billStatementRow}', ['uses' => 'IndexController@postUpdateRow', 'as' => 'row.update']);
         Route::get('{billTask}', ['uses' => 'IndexController@show', 'as' => 'show']);

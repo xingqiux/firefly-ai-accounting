@@ -66,6 +66,8 @@ final class BillInboxControllerTest extends TestCase
         $response->assertSee('待存入');
         $response->assertSee('最近状态');
         $response->assertSee('进入');
+        $response->assertSee('同步邮箱');
+        $response->assertSee(sprintf('action="%s"', route('bill-inbox.sync')), false);
         $response->assertDontSeeText('needs_secret');
         $response->assertDontSee('邮件/摘要');
         $response->assertDontSee('招商银行信用卡电子账单');
@@ -270,6 +272,111 @@ final class BillInboxControllerTest extends TestCase
         $response->assertDontSee('明文密码');
     }
 
+    public function testPreviewShowsReadableDerivedArtifact(): void
+    {
+        Storage::disk('local')->put('artifacts/derived/task-1/statement.csv', "交易时间,金额\n2026-06-01,12.30\n");
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $this->task->id,
+            'kind'         => 'csv',
+            'filename'     => 'statement.csv',
+            'path'         => 'artifacts/derived/task-1/statement.csv',
+            'checksum'     => 'csv-checksum',
+            'encrypted'    => false,
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.artifact.preview', [$artifact->id]));
+
+        $response->assertStatus(200);
+        $response->assertSee('statement.csv');
+        $response->assertSee('交易时间,金额');
+        $response->assertSee('2026-06-01,12.30');
+    }
+
+    public function testPreviewShowsReadableXlsxArtifact(): void
+    {
+        Storage::disk('local')->put('artifacts/derived/task-1/wechat.xlsx', $this->minimalXlsx([
+            ['交易时间', '交易对方', '金额(元)'],
+            ['2026-06-18 10:53:00', '微信转账', '1314.00'],
+        ]));
+        $artifact = BillArtifact::query()->create([
+            'bill_task_id' => $this->task->id,
+            'kind'         => 'xlsx',
+            'filename'     => 'wechat.xlsx',
+            'path'         => 'artifacts/derived/task-1/wechat.xlsx',
+            'checksum'     => 'xlsx-checksum',
+            'encrypted'    => false,
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.artifact.preview', [$artifact->id]));
+
+        $response->assertStatus(200);
+        $response->assertSee('wechat.xlsx');
+        $response->assertSee('交易时间');
+        $response->assertSee('微信转账');
+        $response->assertSee('1314.00');
+    }
+
+    public function testPreviewShowsExtractedBocTextFromPdfArtifact(): void
+    {
+        $pdf = BillArtifact::query()->create([
+            'bill_task_id' => $this->task->id,
+            'kind'         => 'pdf',
+            'filename'     => 'boc.pdf',
+            'path'         => 'artifacts/original/task-1/boc.pdf',
+            'checksum'     => 'boc-pdf-checksum',
+            'encrypted'    => true,
+        ]);
+        Storage::disk('local')->put('artifacts/derived/task-1/boc.txt', "中国银行交易流水\n2026-06-18 收入 1314.00\n");
+        BillArtifact::query()->create([
+            'bill_task_id'             => $this->task->id,
+            'derived_from_artifact_id' => $pdf->id,
+            'kind'                     => 'txt',
+            'filename'                 => 'boc.txt',
+            'path'                     => 'artifacts/derived/task-1/boc.txt',
+            'checksum'                 => 'boc-text-checksum',
+            'encrypted'                => false,
+            'metadata'                 => [
+                'source'   => 'boc_pdf_text_extract',
+                'internal' => true,
+            ],
+        ]);
+
+        $show = $this->actingAs($this->user)->get(route('bill-inbox.show', [$this->task->id]));
+        $show->assertStatus(200);
+        $show->assertSee('boc.pdf');
+        $show->assertSee(route('bill-inbox.artifact.preview', [$pdf->id]), false);
+        $show->assertDontSee('boc.txt');
+
+        $preview = $this->actingAs($this->user)->get(route('bill-inbox.artifact.preview', [$pdf->id]));
+        $preview->assertStatus(200);
+        $preview->assertSee('中国银行交易流水');
+        $preview->assertSee('2026-06-18 收入 1314.00');
+    }
+
+    public function testShowDoesNotDisplayInternalBocTextExtractionArtifact(): void
+    {
+        BillArtifact::query()->create([
+            'bill_task_id'              => $this->task->id,
+            'derived_from_artifact_id'  => $this->task->artifacts()->firstOrFail()->id,
+            'kind'                      => 'txt',
+            'filename'                  => 'statement.txt',
+            'path'                      => 'artifacts/internal/task-1/statement.txt',
+            'checksum'                  => 'internal-text-checksum',
+            'encrypted'                 => false,
+            'metadata'                  => [
+                'source'   => 'boc_pdf_text_extract',
+                'internal' => true,
+            ],
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('bill-inbox.show', [$this->task->id]));
+
+        $response->assertStatus(200);
+        $response->assertSee('statement.zip');
+        $response->assertDontSee('statement.txt');
+        $response->assertDontSee('boc_pdf_text_extract');
+    }
+
     public function testShowDisplaysShortArtifactNames(): void
     {
         $task = BillTask::query()->create([
@@ -334,18 +441,34 @@ final class BillInboxControllerTest extends TestCase
         $response->assertDontSee('>deposit</option>', false);
         $response->assertSee('存入');
         $response->assertSee('筛选');
+        $response->assertSee('全部</option>', false);
+        $response->assertSee('每日</option>', false);
+        $response->assertSee('自定义</option>', false);
+        $response->assertSee('name="row_date"', false);
         $response->assertSee('批量存入');
         $response->assertSee('name="row_ids[]"', false);
 
         $filtered = $this->get(route('bill-inbox.show', [
             'billTask'    => $this->task->id,
             'row_status'  => 'pending',
-            'row_from'    => '2026-06-15',
-            'row_to'      => '2026-06-15',
+            'row_time'    => 'day',
+            'row_date'    => '2026-06-15',
         ]));
 
         $filtered->assertStatus(200);
         $filtered->assertSee('中国联通');
+        $filtered->assertSee(route('bill-inbox.show', [
+            'billTask'    => $this->task->id,
+            'row_status'  => 'pending',
+            'row_time'    => 'day',
+            'row_date'    => '2026-06-14',
+        ]), false);
+        $filtered->assertSee(route('bill-inbox.show', [
+            'billTask'    => $this->task->id,
+            'row_status'  => 'pending',
+            'row_time'    => 'day',
+            'row_date'    => '2026-06-16',
+        ]), false);
 
         $post = $this->post(route('bill-inbox.row.update', [$row->id]), [
             'counterparty'        => '中国联通线上营业厅',
@@ -938,6 +1061,49 @@ final class BillInboxControllerTest extends TestCase
             'event_type'   => 'task.created',
             'message'      => '任务已创建',
         ]);
+    }
+
+    /**
+     * @param array<int,array<int,string>> $rows
+     */
+    private function minimalXlsx(array $rows): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'bill-preview-xlsx-');
+        $zip  = new ZipArchive();
+        $zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+        $zip->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+        $zip->addFromString('_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+        $zip->addFromString('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>');
+        $zip->addFromString('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+        $zip->addFromString('xl/worksheets/sheet1.xml', $this->minimalXlsxSheet($rows));
+        $zip->close();
+
+        $content = file_get_contents($path);
+        @unlink($path);
+
+        return false === $content ? '' : $content;
+    }
+
+    /**
+     * @param array<int,array<int,string>> $rows
+     */
+    private function minimalXlsxSheet(array $rows): string
+    {
+        $xml = '<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+        foreach ($rows as $rowIndex => $row) {
+            $xml .= sprintf('<row r="%d">', $rowIndex + 1);
+            foreach ($row as $cellIndex => $value) {
+                $xml .= sprintf(
+                    '<c r="%s%d" t="inlineStr"><is><t>%s</t></is></c>',
+                    chr(65 + $cellIndex),
+                    $rowIndex + 1,
+                    htmlspecialchars($value, ENT_XML1)
+                );
+            }
+            $xml .= '</row>';
+        }
+
+        return $xml.'</sheetData></worksheet>';
     }
 }
 
