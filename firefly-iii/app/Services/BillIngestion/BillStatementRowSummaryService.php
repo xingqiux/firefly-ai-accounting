@@ -64,7 +64,7 @@ class BillStatementRowSummaryService
                     $preservedUserEdits[] = $preview + ['reason' => '重复流水已保留你的手动修改'];
                 }
             }
-            if (null !== $row->firefly_type && '' !== $row->firefly_type && !$this->looksSpecialCase($row) && 'conflict' !== $row->duplicate_state) {
+            if (null !== $row->firefly_type && '' !== $row->firefly_type && !$this->looksSpecialCase($row) && !in_array($row->duplicate_state, ['duplicate', 'conflict'], true)) {
                 $newCandidates[] = $preview;
             }
             if ($this->hasExistingReference($row, $existingReferences)) {

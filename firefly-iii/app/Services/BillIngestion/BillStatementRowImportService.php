@@ -76,6 +76,13 @@ class BillStatementRowImportService
             ]);
         }
 
+        if (in_array($row->duplicate_state, ['duplicate', 'conflict'], true)) {
+            return $this->reportForRow($row, [
+                'status' => 'skipped',
+                'error'  => '这条流水已识别为重复或冲突，不自动导入。',
+            ]);
+        }
+
         if (null === $row->firefly_type || '' === $row->firefly_type) {
             return $this->reportForRow($row, [
                 'status' => 'skipped',

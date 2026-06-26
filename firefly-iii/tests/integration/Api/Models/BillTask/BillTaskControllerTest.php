@@ -657,6 +657,42 @@ final class BillTaskControllerTest extends TestCase
         $this->assertNull($row->transaction_group_id);
     }
 
+    public function testImportSkipsDuplicateAndConflictStatementRows(): void
+    {
+        $duplicate = $this->createStatementRow([
+            'row_number'      => 1,
+            'duplicate_state' => 'duplicate',
+            'external_key'    => 'alipay:order:duplicate-import-0001',
+            'fingerprint'     => 'fp-duplicate-import-0001',
+        ]);
+        $conflict  = $this->createStatementRow([
+            'row_number'        => 2,
+            'duplicate_state'   => 'conflict',
+            'platform_order_no' => 'conflict-import-0001',
+            'merchant_order_no' => 'conflict-import-merchant-0001',
+            'external_key'      => 'alipay:order:conflict-import-0001',
+            'fingerprint'       => 'fp-conflict-import-0001',
+        ]);
+
+        $this->actingAs($this->user, 'api');
+        $response = $this->postJson(route('api.v1.bill-tasks.import', ['billTask' => $this->task->id]), [
+            'confirm' => true,
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJsonPath('summary.imported', 0);
+        $response->assertJsonPath('summary.skipped', 2);
+        $response->assertJsonPath('rows.0.status', 'skipped');
+        $response->assertJsonPath('rows.0.error', '这条流水已识别为重复或冲突，不自动导入。');
+        $response->assertJsonPath('rows.1.status', 'skipped');
+        $response->assertJsonPath('rows.1.error', '这条流水已识别为重复或冲突，不自动导入。');
+
+        $this->assertSame('pending', $duplicate->refresh()->status);
+        $this->assertSame('pending', $conflict->refresh()->status);
+        $this->assertNull($duplicate->transaction_group_id);
+        $this->assertNull($conflict->transaction_group_id);
+    }
+
     public function testSplitsComboPaymentStatementRow(): void
     {
         $row = $this->createStatementRow([
@@ -811,16 +847,29 @@ final class BillTaskControllerTest extends TestCase
             'platform_order_no'      => 'refund-income-0001',
             'merchant_order_no'      => 'refund-income-merchant-0001',
         ]);
+        $normalExpense = $this->createStatementRow([
+            'row_number'             => 9,
+            'platform_category'      => '餐饮美食',
+            'counterparty'           => '测试餐厅',
+            'description'            => '午餐',
+            'category_name'          => '餐饮美食',
+            'payment_method'         => '招商银行储蓄卡(8705)',
+            'platform_order_no'      => 'normal-expense-0001',
+            'merchant_order_no'      => 'normal-expense-merchant-0001',
+            'external_key'           => 'alipay:order:normal-expense-0001',
+            'fingerprint'            => 'fp-normal-expense-row',
+        ]);
 
         $response = $this->getJson(route('api.v1.bill-tasks.review', ['billTask' => $this->task->id]));
 
         $response->assertStatus(200);
-        $response->assertJsonPath('summary.total', 8);
+        $response->assertJsonPath('summary.total', 9);
         $response->assertJsonPath('summary.imported', 1);
-        $response->assertJsonPath('summary.pending', 7);
+        $response->assertJsonPath('summary.pending', 8);
         $response->assertJsonPath('summary.duplicate_candidates', 2);
         $response->assertJsonPath('summary.conflict_candidates', 1);
         $response->assertJsonPath('summary.preserved_user_edits', 1);
+        $response->assertJsonPath('summary.importable', 1);
         $response->assertJsonPath('existing_candidates.0.row_id', (string) $duplicate->id);
         $response->assertJsonPath('existing_candidates.0.reason', '同订单号已存在 Firefly 交易');
         $response->assertJsonPath('duplicate_candidates.0.row_id', (string) $duplicate->id);
@@ -832,6 +881,10 @@ final class BillTaskControllerTest extends TestCase
         $response->assertJsonPath('refund_pairs.0.expense_row_id', (string) $refundExpense->id);
         $response->assertJsonPath('refund_pairs.0.income_row_id', (string) $refundIncome->id);
         $body = $response->json();
+        $this->assertNotContains((string) $duplicate->id, array_column($body['new_candidates'], 'row_id'));
+        $this->assertNotContains((string) $preserved->id, array_column($body['new_candidates'], 'row_id'));
+        $this->assertNotContains((string) $conflict->id, array_column($body['new_candidates'], 'row_id'));
+        $this->assertContains((string) $normalExpense->id, array_column($body['new_candidates'], 'row_id'));
         $this->assertContains((string) $transfer->id, array_column($body['transfer_candidates'], 'row_id'));
         $this->assertContains((string) $needsNote->id, array_column($body['needs_user_note'], 'row_id'));
         $this->assertStringNotContainsString('2026061522001414871443600001', $response->getContent());
