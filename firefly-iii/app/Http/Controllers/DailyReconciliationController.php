@@ -11,6 +11,7 @@ use FireflyIII\Events\Model\TransactionGroup\UpdatedSingleTransactionGroup;
 use FireflyIII\Events\Model\Webhook\WebhookMessagesRequestSending;
 use FireflyIII\Enums\TransactionTypeEnum;
 use FireflyIII\Helpers\Collector\GroupCollectorInterface;
+use FireflyIII\Models\TransactionCurrency;
 use FireflyIII\Models\TransactionJournal;
 use FireflyIII\Services\Internal\Update\JournalUpdateService;
 use FireflyIII\Support\Facades\Amount;
@@ -40,7 +41,8 @@ final class DailyReconciliationController extends Controller
         $request->validate(['date' => 'nullable|date_format:Y-m-d']);
 
         $day      = Carbon::parse((string) $request->query('date', today(config('app.timezone'))->format('Y-m-d')), config('app.timezone'))->startOfDay();
-        $end      = $day->copy()->endOfDay();
+        $start    = $day->copy()->setTimezone('UTC');
+        $end      = $day->copy()->endOfDay()->setTimezone('UTC');
         $page     = (int) $request->get('page');
         $pageSize = (int) Preferences::get('listPageSize', 50)->data;
         $types    = [TransactionTypeEnum::WITHDRAWAL->value, TransactionTypeEnum::DEPOSIT->value, TransactionTypeEnum::TRANSFER->value];
@@ -48,7 +50,7 @@ final class DailyReconciliationController extends Controller
         /** @var GroupCollectorInterface $collector */
         $collector = app(GroupCollectorInterface::class);
         $groups    = $collector
-            ->setRange($day, $end)
+            ->setRange($start, $end)
             ->setTypes($types)
             ->setLimit($pageSize)
             ->setPage($page)
@@ -66,7 +68,7 @@ final class DailyReconciliationController extends Controller
         return view('daily-reconciliation.index', [
             'day'         => $day,
             'groups'      => $groups,
-            'summary'     => $this->summary($summaryCollector->setRange($day, $end)->setTypes($types)->getExtractedJournals()),
+            'summary'     => $this->summary($summaryCollector->setRange($start, $end)->setTypes($types)->getExtractedJournals()),
             'prevDate'    => $day->copy()->subDay()->format('Y-m-d'),
             'nextDate'    => $day->copy()->addDay()->format('Y-m-d'),
             'currentDate' => $day->format('Y-m-d'),
@@ -116,11 +118,12 @@ final class DailyReconciliationController extends Controller
         $income = '0';
         $expense = '0';
         $count = 0;
-        $currency = Amount::getPrimaryCurrency();
+        $currency = null;
 
         foreach ($transactions as $transaction) {
             ++$count;
-            $amount = (string) ($transaction['pc_amount'] ?: $transaction['amount']);
+            $currency ??= TransactionCurrency::find((int) $transaction['currency_id']);
+            $amount = (string) $transaction['amount'];
             if (TransactionTypeEnum::DEPOSIT->value === $transaction['transaction_type_type']) {
                 $income = bcadd($income, bcmul($amount, '-1'));
             }
@@ -132,9 +135,9 @@ final class DailyReconciliationController extends Controller
         $net = bcsub($income, $expense);
 
         return [
-            'income'  => Amount::formatAnything($currency, $income, false),
-            'expense' => Amount::formatAnything($currency, $expense, false),
-            'net'     => Amount::formatAnything($currency, $net, false),
+            'income'  => Amount::formatAnything($currency ?? Amount::getPrimaryCurrency(), $income, false),
+            'expense' => Amount::formatAnything($currency ?? Amount::getPrimaryCurrency(), $expense, false),
+            'net'     => Amount::formatAnything($currency ?? Amount::getPrimaryCurrency(), $net, false),
             'count'   => $count,
         ];
     }

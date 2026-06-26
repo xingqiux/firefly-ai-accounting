@@ -23,6 +23,7 @@ final class DailyReconciliationControllerTest extends TestCase
     {
         $user     = $this->createAuthenticatedUser();
         $this->createWithdrawal($user);
+        $this->createWithdrawal($user, '2026-06-19 10:30:00', '次日消费');
         $response = $this->actingAs($user)->get(route('daily-reconciliation.index', ['date' => '2026-06-18']));
 
         $response->assertStatus(200);
@@ -34,6 +35,8 @@ final class DailyReconciliationControllerTest extends TestCase
         $response->assertSee('支出');
         $response->assertSee('净额');
         $response->assertSee('交易数');
+        $response->assertSee('¥12.34');
+        $response->assertDontSee('€12.34');
         $response->assertSee('当天交易');
         $response->assertSee('type="date"', false);
         $response->assertSee('name="description"', false);
@@ -43,6 +46,7 @@ final class DailyReconciliationControllerTest extends TestCase
         $response->assertSee('name="amount"', false);
         $response->assertSee('name="transaction_date"', false);
         $response->assertSee('日常消费');
+        $response->assertDontSee('次日消费');
         $response->assertSee('餐饮');
         $response->assertSee('招商银行');
         $response->assertSee('便利店');
@@ -51,9 +55,14 @@ final class DailyReconciliationControllerTest extends TestCase
         $response->assertSee(route('daily-reconciliation.index', ['date' => '2026-06-19']), false);
     }
 
-    private function createWithdrawal(User $user): void
+    private function createWithdrawal(User $user, string $date = '2026-06-18 10:30:00', string $description = '日常消费'): void
     {
-        $currency = TransactionCurrency::where('code', 'EUR')->first();
+        $currency = TransactionCurrency::where('code', 'CNY')->first() ?? TransactionCurrency::factory()->create([
+            'code'           => 'CNY',
+            'name'           => 'Chinese Yuan',
+            'symbol'         => '¥',
+            'decimal_places' => 2,
+        ]);
         $source   = Account::factory()->withType(AccountTypeEnum::ASSET)->create([
             'user_id'       => $user->id,
             'user_group_id' => $user->user_group_id,
@@ -72,9 +81,9 @@ final class DailyReconciliationControllerTest extends TestCase
             'fire_webhooks' => false,
             'transactions'  => [[
                 'type'                  => TransactionTypeEnum::WITHDRAWAL->value,
-                'date'                  => Carbon::parse('2026-06-18 10:30:00', config('app.timezone')),
+                'date'                  => Carbon::parse($date, config('app.timezone')),
                 'amount'                => '12.34',
-                'description'           => '日常消费',
+                'description'           => $description,
                 'currency_id'           => $currency->id,
                 'currency_code'         => $currency->code,
                 'foreign_currency_id'   => null,
