@@ -29,21 +29,14 @@ class NativeImapBillMailboxClient implements ImapBillMailboxClient
 
     public function connect(BillMailboxConfig $config): void
     {
-        $scheme       = 'ssl' === $config->encryption ? 'ssl' : 'tcp';
-        $remoteSocket = sprintf('%s://%s:%d', $scheme, $config->host, $config->port);
-        $stream       = @stream_socket_client($remoteSocket, $errno, $errstr, 30);
-        if (false === $stream) {
-            throw new RuntimeException(sprintf('Could not connect to IMAP mailbox: %s', '' === $errstr ? (string) $errno : $errstr));
-        }
+        $stream = $this->openStream($config);
 
         stream_set_timeout($stream, 30);
         $this->stream = $stream;
         $this->readUntilTagged('');
         if ('starttls' === $config->encryption) {
             $this->writeCommand('STARTTLS');
-            if (false === stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                throw new RuntimeException('Could not enable STARTTLS for IMAP mailbox.');
-            }
+            $this->enableTls($stream, $config->host, 'Could not enable STARTTLS for IMAP mailbox.');
         }
 
         $this->writeCommand(sprintf('LOGIN %s %s', $this->quote($config->username), $this->quote($config->password)));
@@ -101,6 +94,156 @@ class NativeImapBillMailboxClient implements ImapBillMailboxClient
         }
 
         return $this->quote('INBOX');
+    }
+
+    /**
+     * @return resource
+     */
+    private function openStream(BillMailboxConfig $config)
+    {
+        $proxy = $this->proxyFromEnvironment($config->host);
+        if (null !== $proxy) {
+            return $this->openProxyStream($config, $proxy);
+        }
+
+        $scheme       = 'ssl' === $config->encryption ? 'ssl' : 'tcp';
+        $remoteSocket = sprintf('%s://%s:%d', $scheme, $config->host, $config->port);
+        $stream       = @stream_socket_client($remoteSocket, $errno, $errstr, 30);
+        if (false === $stream) {
+            throw new RuntimeException(sprintf('Could not connect to IMAP mailbox: %s', '' === $errstr ? (string) $errno : $errstr));
+        }
+
+        return $stream;
+    }
+
+    /**
+     * @param array{host:string,port:int,user?:string,pass?:string} $proxy
+     *
+     * @return resource
+     */
+    private function openProxyStream(BillMailboxConfig $config, array $proxy)
+    {
+        $stream = @stream_socket_client(sprintf('tcp://%s:%d', $proxy['host'], $proxy['port']), $errno, $errstr, 30);
+        if (false === $stream) {
+            throw new RuntimeException(sprintf('Could not connect to IMAP proxy: %s', '' === $errstr ? (string) $errno : $errstr));
+        }
+
+        stream_set_timeout($stream, 30);
+        $this->establishProxyTunnel($stream, $config, $proxy);
+        if ('ssl' === $config->encryption) {
+            $this->enableTls($stream, $config->host, 'Could not enable TLS for proxied IMAP mailbox.');
+        }
+
+        return $stream;
+    }
+
+    /**
+     * @param resource                                      $stream
+     * @param array{host:string,port:int,user?:string,pass?:string} $proxy
+     */
+    private function establishProxyTunnel($stream, BillMailboxConfig $config, array $proxy): void
+    {
+        $target  = sprintf('%s:%d', $config->host, $config->port);
+        $headers = [
+            sprintf('CONNECT %s HTTP/1.1', $target),
+            sprintf('Host: %s', $target),
+            'Proxy-Connection: Keep-Alive',
+        ];
+        if (isset($proxy['user'])) {
+            $headers[] = 'Proxy-Authorization: Basic '.base64_encode($proxy['user'].':'.($proxy['pass'] ?? ''));
+        }
+        fwrite($stream, implode("\r\n", $headers)."\r\n\r\n");
+
+        $statusLine = fgets($stream);
+        if (false === $statusLine || 1 !== preg_match('#^HTTP/\d(?:\.\d)?\s+200\b#i', $statusLine)) {
+            throw new RuntimeException(sprintf('Could not establish IMAP proxy tunnel: %s', trim(false === $statusLine ? '' : $statusLine)));
+        }
+        while (false !== ($line = fgets($stream))) {
+            if ("\r\n" === $line || "\n" === $line) {
+                return;
+            }
+        }
+
+        throw new RuntimeException('IMAP proxy tunnel closed unexpectedly.');
+    }
+
+    /**
+     * @return null|array{host:string,port:int,user?:string,pass?:string}
+     */
+    private function proxyFromEnvironment(string $host): ?array
+    {
+        if ($this->matchesNoProxy($host)) {
+            return null;
+        }
+
+        foreach (['BILL_INBOX_IMAP_PROXY', 'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy'] as $name) {
+            if ('HTTP_PROXY' === $name && false !== getenv('REQUEST_METHOD')) {
+                continue;
+            }
+            $value = getenv($name);
+            if (is_string($value) && '' !== trim($value)) {
+                return $this->parseProxyUrl(trim($value));
+            }
+        }
+
+        return null;
+    }
+
+    private function matchesNoProxy(string $host): bool
+    {
+        $host = strtolower($host);
+        $list = getenv('NO_PROXY') ?: getenv('no_proxy') ?: '';
+        foreach (explode(',', (string) $list) as $entry) {
+            $entry = strtolower(trim($entry));
+            if ('' === $entry) {
+                continue;
+            }
+            if ('*' === $entry) {
+                return true;
+            }
+            $entry = ltrim(explode(':', $entry, 2)[0], '.');
+            if ($host === $entry || str_ends_with($host, '.'.$entry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return null|array{host:string,port:int,user?:string,pass?:string}
+     */
+    private function parseProxyUrl(string $url): ?array
+    {
+        if (!str_contains($url, '://')) {
+            $url = 'http://'.$url;
+        }
+        $parts = parse_url($url);
+        if (false === $parts || 'http' !== strtolower((string) ($parts['scheme'] ?? 'http')) || !isset($parts['host'])) {
+            return null;
+        }
+
+        $proxy = [
+            'host' => (string) $parts['host'],
+            'port' => (int) ($parts['port'] ?? 80),
+        ];
+        if (isset($parts['user'])) {
+            $proxy['user'] = rawurldecode((string) $parts['user']);
+            $proxy['pass'] = rawurldecode((string) ($parts['pass'] ?? ''));
+        }
+
+        return $proxy;
+    }
+
+    /**
+     * @param resource $stream
+     */
+    private function enableTls($stream, string $peerName, string $error): void
+    {
+        stream_context_set_option($stream, 'ssl', 'peer_name', $peerName);
+        if (false === stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            throw new RuntimeException($error);
+        }
     }
 
     private function fetchLiteral(string $command): string
