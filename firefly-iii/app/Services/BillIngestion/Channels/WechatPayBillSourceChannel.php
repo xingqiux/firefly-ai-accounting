@@ -118,7 +118,7 @@ class WechatPayBillSourceChannel implements BillSourceChannel
 
     public function prepare(BillTask $task): bool
     {
-        if ($task->artifacts()->where('metadata->source', 'remote_download')->exists()) {
+        if ($task->artifacts()->whereMetadataSource('remote_download')->exists()) {
             return true;
         }
 

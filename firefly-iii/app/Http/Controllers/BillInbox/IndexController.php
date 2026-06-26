@@ -598,7 +598,7 @@ class IndexController extends Controller
         $previewArtifact = $artifact->children()
             ->whereIn('kind', ['txt', 'text'])
             ->where('encrypted', false)
-            ->where('metadata->source', 'boc_pdf_text_extract')
+            ->whereMetadataSource('boc_pdf_text_extract')
             ->orderByDesc('id')
             ->first()
         ;

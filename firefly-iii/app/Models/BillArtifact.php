@@ -81,20 +81,34 @@ class BillArtifact extends Model
 
     public function scopeVisibleToUser(Builder $query): Builder
     {
+        [$internalExpression, $internalBindings] = $this->metadataTextExpression($query, 'internal');
+        [$sourceExpression, $sourceBindings]     = $this->metadataTextExpression($query, 'source');
+
         return $query
-            ->where(static function (Builder $query): void {
-                $query
-                    ->whereNull('metadata->internal')
-                    ->orWhere('metadata->internal', false)
-                ;
-            })
-            ->where(static function (Builder $query): void {
-                $query
-                    ->whereNull('metadata->source')
-                    ->orWhere('metadata->source', '!=', 'boc_pdf_text_extract')
-                ;
-            })
+            ->whereRaw(sprintf("COALESCE(%s, '') NOT IN ('true', '1')", $internalExpression), $internalBindings)
+            ->whereRaw(sprintf("COALESCE(%s, '') <> ?", $sourceExpression), [...$sourceBindings, 'boc_pdf_text_extract'])
         ;
+    }
+
+    public function scopeWhereMetadataSource(Builder $query, string $source): Builder
+    {
+        [$expression, $bindings] = $this->metadataTextExpression($query, 'source');
+
+        return $query->whereRaw(sprintf('%s = ?', $expression), [...$bindings, $source]);
+    }
+
+    /**
+     * @return array{0:string,1:array<int,string>}
+     */
+    private function metadataTextExpression(Builder $query, string $key): array
+    {
+        $column = $query->getModel()->qualifyColumn('metadata');
+
+        return match ($query->getConnection()->getDriverName()) {
+            'pgsql'         => [sprintf("jsonb_extract_path_text(NULLIF((%s)::text, '')::jsonb, ?)", $column), [$key]],
+            'sqlite'        => [sprintf("CAST(json_extract(NULLIF(%s, ''), ?) AS TEXT)", $column), ['$.'.$key]],
+            default         => [sprintf("JSON_UNQUOTE(JSON_EXTRACT(NULLIF(%s, ''), ?))", $column), ['$.'.$key]],
+        };
     }
 
     protected function casts(): array

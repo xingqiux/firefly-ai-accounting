@@ -208,7 +208,7 @@ class BocTransactionBillSourceChannel implements BillSourceChannel
         foreach ($pdfs as $pdf) {
             $existingTextArtifact = $pdf->children()
                 ->where('kind', 'txt')
-                ->where('metadata->source', 'boc_pdf_text_extract')
+                ->whereMetadataSource('boc_pdf_text_extract')
                 ->orderBy('id')
                 ->first()
             ;
